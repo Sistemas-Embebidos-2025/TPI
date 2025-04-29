@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Arduino Control</title>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js" integrity="sha384-mkQ3/7FUtcGyoppY6bz/PORYoGqOl7/aSUMn2ymDOJcapfS6PHqxhRTMh1RR0Q6+" crossorigin="anonymous"></script>
+    <!-- <script defer src="script.js"></script> -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+<div class="container">
+    <h1>Arduino LED & LDR Control</h1>
+
+    <div class="card">
+        <h2>PWM LEDs</h2>
+        <div class="control-group">
+            <label>LED 9:
+                <input type="range" min="0" max="255" id="L1">
+                <span class="value-display" id="L1_val">0</span>
+            </label>
+        </div>
+        <div class="control-group">
+            <label>LED 10:
+                <input type="range" min="0" max="255" id="L2">
+                <span class="value-display" id="L2_val">0</span>
+            </label>
+        </div>
+        <div class="control-group">
+            <label>LED 11:
+                <input type="range" min="0" max="255" id="L3">
+                <span class="value-display" id="L3_val">0</span>
+            </label>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Digital LED 13</h2>
+        <div class="control-group">
+            <button id="D13_toggle">Toggle</button>
+            <span>State: <span id="D13_state">OFF</span></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>LDR (A3)</h2>
+        <div class="control-group">
+            <div>Value: <span class="sensor-value" id="A3_val">0</span></div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
