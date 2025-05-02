@@ -73,15 +73,46 @@ $('.threshold-input').on('input', function () {
 	socket.emit('threshold_update', {key, value});
 });
 
-// Manual Controls
-$('#manualIrrigation').click(() => {
-	const state = $('#irrigationState').text() === 'ON' ? 'off' : 'on';
-	socket.emit('manual_control', {type: 'irrigation', value: state});
+// Auto Mode Toggles
+$('#autoIrrigationToggle').change(function () {
+	const state = $(this).prop('checked');
+	$('#irrigationModeStatus').text(state ? 'Auto' : 'Manual');
+	$('#irrigationControls').toggleClass('active', !state);
+	socket.emit('toggle_auto_control', {
+		key: 'AUTO_IRRIGATION',
+		state: state
+	});
 });
 
-$('#manualLight').click(() => {
-	const state = $('#lightState').text() === 'ON' ? 'off' : 'on';
-	socket.emit('manual_control', {type: 'light', value: state});
+$('#autoLightToggle').change(function () {
+	const state = $(this).prop('checked');
+	$('#lightModeStatus').text(state ? 'Auto' : 'Manual');
+	$('#lightControls').toggleClass('active', !state);
+	socket.emit('toggle_auto_control', {
+		key: 'AUTO_LIGHT',
+		state: state
+	});
+});
+
+// Manual Irrigation Control
+$('#manualIrrigationToggle').click(() => {
+	const currentState = $('#irrigationState').text() === 'ON';
+	const newState = !currentState;
+	$('#irrigationState').text(newState ? 'ON' : 'OFF');
+	socket.emit('manual_control', {
+		key: 'MANUAL_IRRIGATION',
+		state: newState
+	});
+});
+
+// Manual Light Control
+$('#manualLightSlider').on('input', function () {
+	const brightness = $(this).val();
+	$('#manualLightValue').text(brightness);
+	socket.emit('manual_control', {
+		key: 'MANUAL_LIGHT',
+		state: brightness
+	});
 });
 
 // Initialize charts when page loads

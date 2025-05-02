@@ -1,11 +1,11 @@
+import time
 from datetime import datetime
+from threading import Thread, Lock
 
 import ntplib
+import serial
 from flask import Flask, render_template
 from flask_socketio import SocketIO
-import serial
-from threading import Thread, Lock
-import time
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -20,6 +20,7 @@ LIGHT_THRESH = 300
 NTP_SERVER = 'pool.ntp.org'
 TIME_ZONE_OFFSET = -3  # Argentina Time (UTC-3)
 
+
 def get_ntp_time():
     client = ntplib.NTPClient()
     try:
@@ -28,6 +29,7 @@ def get_ntp_time():
     except Exception as e:
         print(f"NTP Error: {e}")
         return datetime.now().timestamp()  # Fallback to system time
+
 
 def sync_time():
     while True:
@@ -40,7 +42,9 @@ def sync_time():
 
         time.sleep(60)  # Sync every minute
 
+
 def serial_reader():
+    # SENSORS:MOISTURE:369;LIGHT:158
     while True:
         try:
             # Reads a full line of data, decodes the bytes to a string, and removes leading/trailing whitespaces.
@@ -52,6 +56,7 @@ def serial_reader():
                 continue
             if line.startswith("SENSORS:"):
                 # Parse sensor data
+                line = line.replace("SENSORS:", "")
                 data = {}
                 parts = line.split(';')
                 for part in parts:
@@ -74,12 +79,14 @@ def serial_reader():
             print("Serial read error:", e)
         time.sleep(0.1)
 
+
 @app.route('/')
 def index():
     """
     Renders the main page of the web application.
     """
     return render_template('index.html')
+
 
 @socketio.on("threshold_update")
 def threshold_update(data):
@@ -97,9 +104,49 @@ def threshold_update(data):
     with lock:
         ser.write(f"{key}:{int(value)}\n".encode())
 
+
+@socketio.on("toggle_auto_control")
+def toggle_auto_control(data):
+    key = data.get('key')
+    state = data.get('state')
+    if key not in ['AUTO_IRRIGATION', 'AUTO_LIGHT']:
+        return
+    with lock:
+        ser.write(f"{key}:{1 if state else 0}\n".encode())
+
+
+@socketio.on("manual_control")
+def manual_control(data):
+    key = data.get('key')
+    state = data.get('state')
+    if key not in ['MANUAL_IRRIGATION', 'MANUAL_LIGHT']:
+        return
+    with lock:
+        if key == 'MANUAL_IRRIGATION':
+            ser.write(f"MANUAL_IRRIGATION:{1 if state else 0}\n".encode())
+        elif key == 'MANUAL_LIGHT':
+            brightness = int(state)
+            ser.write(f"MANUAL_LIGHT:{brightness}\n".encode())
+
+# // Handle backend confirmation
+# socket.on('control_update', function(data) {
+#     if(data.key === 'AUTO_IRRIGATION') {
+#         $('#autoIrrigationToggle').prop('checked', data.state);
+#         $('#irrigationModeStatus').text(data.state ? 'Auto' : 'Manual');
+#         $('#irrigationControls').toggleClass('active', !data.state);
+#     }
+#     if(data.key === 'AUTO_LIGHT') {
+#         $('#autoLightToggle').prop('checked', data.state);
+#         $('#lightModeStatus').text(data.state ? 'Auto' : 'Manual');
+#         $('#lightControls').toggleClass('active', !data.state);
+#     }
+# });
+
+# TODO: Implement the log_request function to handle incoming log requests.
 @socketio.on("log_request")
 def log_request(data):
     pass
+
 
 if __name__ == '__main__':
     Thread(target=sync_time, daemon=True).start()
