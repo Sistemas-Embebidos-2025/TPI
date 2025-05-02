@@ -9,42 +9,48 @@
 </head>
 <body>
 <div class="container">
-    <h1>Arduino LED & LDR Control</h1>
+    <h1>🌿 Smart Garden Monitoring System 🌿</h1>
 
+    <!-- Sensor Charts -->
     <div class="card">
-        <h2>PWM LEDs</h2>
+        <h2>Sensor Monitoring</h2>
+        <div class="chart-container">
+            <canvas id="moistureChart"></canvas>
+            <canvas id="lightChart"></canvas>
+        </div>
+        <div class="sensor-display">
+            <div>Current Moisture: <span id="moistureValue" class="sensor-value">0</span></div>
+            <div>Current Light: <span id="lightValue" class="sensor-value">0</span></div>
+        </div>
+    </div>
+
+    <!-- Threshold Controls -->
+    <div class="card">
+        <h2>Threshold Settings</h2>
         <div class="control-group">
-            <label>LED 9:
-                <input type="range" min="0" max="255" id="L1">
-                <span class="value-display" id="L1_val">0</span>
+            <label>Moisture Threshold:
+                <input type="range" class="threshold-input" data-type="MOISTURE_THRESH" min="0" max="1023" value="500">
+                <span id="MOISTURE_THRESHValue" class="value-display">500</span>
             </label>
         </div>
         <div class="control-group">
-            <label>LED 10:
-                <input type="range" min="0" max="255" id="L2">
-                <span class="value-display" id="L2_val">0</span>
-            </label>
-        </div>
-        <div class="control-group">
-            <label>LED 11:
-                <input type="range" min="0" max="255" id="L3">
-                <span class="value-display" id="L3_val">0</span>
+            <label>Light Threshold:
+                <input type="range" class="threshold-input" data-type="LIGHT_THRESH" min="0" max="1023" value="300">
+                <span id="LIGHT_THRESHValue" class="value-display">300</span>
             </label>
         </div>
     </div>
 
+    <!-- Manual Controls -->
     <div class="card">
-        <h2>Digital LED 13</h2>
+        <h2>Manual Controls</h2>
         <div class="control-group">
-            <button id="D13_toggle">Toggle</button>
-            <span>State: <span id="D13_state">OFF</span></span>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>LDR (A3)</h2>
-        <div class="control-group">
-            <div>Value: <span class="sensor-value" id="A3_val">0</span></div>
+            <button id="manualIrrigation" class="control-btn">
+                Irrigation: <span id="irrigationState">OFF</span>
+            </button>
+            <button id="manualLight" class="control-btn">
+                Artificial Light: <span id="lightState">OFF</span>
+            </button>
         </div>
     </div>
 </div>
