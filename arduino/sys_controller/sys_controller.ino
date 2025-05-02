@@ -1,147 +1,168 @@
 #include <EEPROM.h>
 #include <Arduino_FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
 
 // Pin Definitions
 #define MOISTURE_SENSOR A0
-#define LIGHT_SENSOR_PIN A3
+#define LIGHT_SENSOR A3
 #define IRRIGATION_PIN 9
+#define LIGHT_ADJUST_PIN 10
 #define EEPROM_LOG_START 100
 
-// EEPROM Structure
-struct Config {
-  int moisture_thresh;
-  int light_thresh;
+// EEPROM Event Log
+struct Event {
+    uint32_t timestamp;
+    uint8_t event_type;
+    uint16_t value;
 };
 
-struct EventLog {
-  uint32_t timestamp;
-  char event_type[20];
-  int value;
+enum EventType {
+    AUTO_IRRIGATION_START,
+    AUTO_IRRIGATION_STOP,
+    MANUAL_IRRIGATION_START,
+    MANUAL_IRRIGATION_STOP,
+    AUTO_LIGHT_ADJUSTMENT,
+    MANUAL_LIGHT_ADJUSTMENT,
+    MOISTURE_ALERT,
+    LIGHT_ALERT,
+    CONFIG_CHANGE
 };
 
-// Global Variables
-Config config;
-int moisture, light;
-bool auto_mode = true;
-QueueHandle_t xEventQueue;
+const int RECORD_SIZE = sizeof(Event);
+int nextLogAddress = 0;
+SemaphoreHandle_t eepromMutex;
 
-void TaskSensorRead(void *pv) {
-  for (;;) {
-    moisture = analogRead(MOISTURE_SENSOR);
-    light = analogRead(LIGHT_SENSOR_PIN);
-    vTaskDelay(pdMS_TO_TICKS(1000));  // Read every second
-  }
-}
+// Thresholds and State
+uint16_t moisture_threshold = 500;
+uint16_t light_threshold = 300;
+bool auto_irrigation = true;
+bool auto_light = true;
+volatile uint32_t current_time = 0;
 
-void TaskAutoControl(void *pv) {
-  for (;;) {
-    if (auto_mode) {
-      // Automatic irrigation control
-      if (moisture < config.moisture_thresh) {
-        digitalWrite(IRRIGATION_PIN, HIGH);
-        logEvent("AUTO_IRRIGATION", 1);
-      } else {
-        digitalWrite(IRRIGATION_PIN, LOW);
-      }
-
-      // Light adjustment
-      // int light_level = map(light, 0, config.light_thresh, 255, 0);
-      if (light < config.light_thresh) {
-        analogWrite(IRRIGATION_PIN, 255);
-        logEvent("AUTO_LIGHT", 1);
-      } else {
-        analogWrite(IRRIGATION_PIN, 0);
-      }
-      analogWrite(9, constrain(light_level, 0, 255));
-    }
-    vTaskDelay(pdMS_TO_TICKS(2000));
-  }
-}
-
-void TaskSerialComm(void *pv) {
-  for (;;) {
-    if (Serial.available()) {
-      String cmd = Serial.readStringUntil('\n');
-      cmd.trim();
-      processCommand(cmd);
-    }
-    sendSensorData();
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
-}
-
-void processCommand(String cmd) {
-  // Handle threshold updates
-  if (cmd.startsWith("THRESHOLD:")) {
-    int firstColon = cmd.indexOf(':');                   // Position of first colon
-    int secondColon = cmd.indexOf(':', firstColon + 1);  // Position of second colon
-
-    String type = cmd.substring(firstColon + 1, secondColon);  // "light" or "moisture"
-    int value = cmd.substring(secondColon + 1).toInt();        // Threshold value
-
-    if (type == "light") {
-      config.light_thresh = value;
-    } else if (type == "moisture") {
-      config.moisture_thresh = value;
-    } else {
-      Serial.println("ERROR:INVALID_TYPE");
-      return;
-    }
-
-    // Save to EEPROM
-    EEPROM.put(0, config);
-    logEvent("THRESHOLD_CHANGE", value);
-  }
-
-  // Handle mode changes (AUTO/MANUAL)
-  else if (cmd.startsWith("MODE:")) {
-    String mode = cmd.substring(5);  // "AUTO" or "MANUAL"
-    auto_mode = (mode == "AUTO");
-    logEvent("MODE_CHANGE", auto_mode);
-  }
-
-  // Handle log requests
-  else if (cmd == "GET_LOGS") {
-    // Send logs via serial
-    for (int addr = EEPROM_LOG_START; addr < EEPROM.length(); addr += sizeof(EventLog)) {
-      EventLog log;
-      EEPROM.get(addr, log);
-      Serial.print("LOG:");
-      Serial.print(log.timestamp);
-      Serial.print(",");
-      Serial.print(log.event_type);
-      Serial.print(",");
-      Serial.println(log.value);
-    }
-  }
-
-  // Error handling for unknown commands
-  else {
-    Serial.println("ERROR:INVALID_COMMAND");
-  }
-}
-
-void logEvent(const char *type, int value) {
-  EventLog log;
-  log.timestamp = millis();
-  strncpy(log.event_type, type, 19);
-  log.value = value;
-
-  static int log_addr = EEPROM_LOG_START;
-  EEPROM.put(log_addr, log);
-  log_addr = (log_addr + sizeof(EventLog)) % (EEPROM.length() - sizeof(EventLog));
-}
+// RTOS Tasks
+void readSensorsTask(void *pvParameters);
+void autoControlTask(void *pvParameters);
+void serialComTask(void *pvParameters);
+void logEvent(uint8_t type, uint16_t value);
 
 void setup() {
-  Serial.begin(57600);
-  pinMode(IRRIGATION_PIN, OUTPUT);
+    Serial.begin(115200);
+    pinMode(IRRIGATION_PIN, OUTPUT);
+    pinMode(LIGHT_ADJUST_PIN, OUTPUT);
 
-  // Load config from EEPROM
-  EEPROM.get(0, config);
+    EEPROM.begin();
+    eepromMutex = xSemaphoreCreateMutex();
+    nextLogAddress = findNextEEPROMAddress();
 
-  xTaskCreate(TaskSensorRead, "Sensors", 128, NULL, 1, NULL);
-  xTaskCreate(TaskAutoControl, "Control", 128, NULL, 2, NULL);
-  xTaskCreate(TaskSerialComm, "Serial", 128, NULL, 1, NULL);
+    xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 2, NULL);
+    xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 2, NULL);
+    xTaskCreate(serialComTask, "Serial", 128, NULL, 1, NULL);
 }
 
 void loop() {}
+
+void readSensorsTask(void *pvParameters) {
+    while (1) {
+        uint16_t moisture = analogRead(MOISTURE_SENSOR);
+        uint16_t light = analogRead(LIGHT_SENSOR);
+
+        if (moisture < moisture_threshold) {
+            logEvent(MOISTURE_ALERT, moisture);
+        }
+        if (light < light_threshold) {
+            logEvent(LIGHT_ALERT, light);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void autoControlTask(void *pvParameters) {
+    while (1) {
+        uint16_t moisture = analogRead(MOISTURE_SENSOR);
+        uint16_t light = analogRead(LIGHT_SENSOR);
+
+        if (auto_irrigation) {
+            if (moisture < moisture_threshold && digitalRead(IRRIGATION_PIN) == LOW) {
+                digitalWrite(IRRIGATION_PIN, HIGH);
+                logEvent(AUTO_IRRIGATION_START, moisture);
+            } else if (moisture >= moisture_threshold && digitalRead(IRRIGATION_PIN) == HIGH) {
+                digitalWrite(IRRIGATION_PIN, LOW);
+                logEvent(AUTO_IRRIGATION_STOP, moisture);
+            }
+        }
+
+        if (auto_light) {
+            int brightness = map(light, 0, light_threshold, 255, 0);
+            analogWrite(LIGHT_ADJUST_PIN, brightness);
+            if (light < light_threshold) {
+                logEvent(AUTO_LIGHT_ADJUSTMENT, brightness);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+void serialComTask(void *pvParameters) {
+    while (1) {
+        if (!Serial.available()) {
+            return;
+        }
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+
+        int colon = cmd.indexOf(':');
+        if (colon == -1) {
+            return;
+        }
+
+        String key = cmd.substring(0, colon);
+        key.trim();
+        int val = cmd.substring(colon + 1).toInt();
+
+        if (key == "TIME") {
+            current_time = val;
+            Serial.print("TIME_SET:");
+            Serial.println(current_time);
+        } else if (key == "SET_MOISTURE_THRESH") {
+            moisture_threshold = val;
+            logEvent(CONFIG_CHANGE, moisture_threshold);
+        } else if (key == "SET_LIGHT_THRESH") {
+            light_threshold = val;
+            logEvent(CONFIG_CHANGE, light_threshold);
+        } else if (key == "AUTO_IRRIGATION") {
+            auto_irrigation = (val == 1);
+            logEvent(CONFIG_CHANGE, auto_irrigation ? 1 : 0);
+        } else if (key == "AUTO_LIGHT") {
+            auto_light = (val == 1);
+            logEvent(CONFIG_CHANGE, auto_light ? 1 : 0);
+        } else if (key == "MANUAL_IRRIGATION") {
+            digitalWrite(IRRIGATION_PIN, val == 1 ? HIGH : LOW);
+            logEvent(val == 1 ? MANUAL_IRRIGATION_START : MANUAL_IRRIGATION_STOP, val);
+        } else if (key == "MANUAL_LIGHT") {
+            int brightness = constrain(val, 0, 255);
+            analogWrite(LIGHT_ADJUST_PIN, brightness);
+            logEvent(MANUAL_LIGHT_ADJUSTMENT, brightness);
+        }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+void logEvent(uint8_t type, uint16_t value) {
+    if(xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
+        Event newEvent = {current_time, type, value};
+        EEPROM.put(nextLogAddress, newEvent);
+        nextLogAddress = (nextLogAddress + RECORD_SIZE) % EEPROM.length();
+        xSemaphoreGive(eepromMutex);
+    }
+}
+
+int findNextEEPROMAddress() {
+    Event event;
+    for(int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+        EEPROM.get(addr, event);
+        if(event.timestamp == 0xFFFFFFFF) return addr;
+    }
+    return 0;
+}
