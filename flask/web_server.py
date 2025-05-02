@@ -128,19 +128,6 @@ def manual_control(data):
             brightness = int(state)
             ser.write(f"MANUAL_LIGHT:{brightness}\n".encode())
 
-# // Handle backend confirmation
-# socket.on('control_update', function(data) {
-#     if(data.key === 'AUTO_IRRIGATION') {
-#         $('#autoIrrigationToggle').prop('checked', data.state);
-#         $('#irrigationModeStatus').text(data.state ? 'Auto' : 'Manual');
-#         $('#irrigationControls').toggleClass('active', !data.state);
-#     }
-#     if(data.key === 'AUTO_LIGHT') {
-#         $('#autoLightToggle').prop('checked', data.state);
-#         $('#lightModeStatus').text(data.state ? 'Auto' : 'Manual');
-#         $('#lightControls').toggleClass('active', !data.state);
-#     }
-# });
 
 # TODO: Implement the log_request function to handle incoming log requests.
 @socketio.on("log_request")
