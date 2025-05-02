@@ -71,6 +71,14 @@ void readSensorsTask(void *pvParameters) {
         uint16_t moisture = analogRead(MOISTURE_SENSOR);
         uint16_t light = analogRead(LIGHT_SENSOR);
 
+        // Send sensor readings via serial
+        xSemaphoreTake(serialMutex, portMAX_DELAY);
+        Serial.print("SENSORS:MOISTURE:");
+        Serial.print(moisture);
+        Serial.print(";LIGHT:");
+        Serial.println(light);
+        xSemaphoreGive(serialMutex);
+
         if (moisture < moisture_threshold) {
             logEvent(MOISTURE_ALERT, moisture);
         }
