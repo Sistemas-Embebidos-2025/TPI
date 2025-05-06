@@ -13,7 +13,7 @@ socketio = SocketIO(app)
 # Ensure you use the correct COM port for your system
 try:
     # ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1) # Linux
-    ser = serial.Serial('COM3', 115200, timeout=1)  # Opens the serial port COMX (WINDOWS)
+    ser = serial.Serial('COM3', 115200, timeout=5)  # Opens the serial port COMX (WINDOWS)
 except serial.SerialException as port_error:
     print(f"Error opening serial port: {port_error}")
     ser = None  # Set ser to None if port cannot be opened
@@ -21,8 +21,8 @@ except serial.SerialException as port_error:
 lock = Lock()
 
 # Threshold defaults
-MOISTURE_THRESH = 500
-LIGHT_THRESH = 300
+MOISTURE_THRESH = 100
+LIGHT_THRESH = 100
 
 # NTP Server configuration
 NTP_SERVER = 'pool.ntp.org'
@@ -170,13 +170,6 @@ def serial_reader():
                     'moisture': data.get('MOISTURE', 0),
                     'light': data.get('LIGHT', 0)
                 })
-            elif line.startswith("TIME_SET:"):
-                try:
-                    timestamp = int(line.split(':')[1])
-                    human_time = datetime.fromtimestamp(timestamp).isoformat()
-                    socketio.emit('time_update', {'timestamp': timestamp, 'human': human_time})
-                except (IndexError, ValueError):
-                    print(f"Warning: Could not parse TIME_SET line: {line}")
             else:
                 # Emit other non-log, non-sensor data if needed
                 if line:
@@ -199,7 +192,7 @@ def threshold_update(data):
     key = data.get('key')
     value = data.get('value')
     print(f"Received threshold update: {key} = {value}")  # Debug print
-    if key not in ['SET_MOISTURE_THRESH', 'SET_LIGHT_THRESH']:
+    if key not in ['M_THRESH', 'L_THRESH']:
         print(f"Invalid key for threshold update: {key}")
         return
 
@@ -221,7 +214,7 @@ def toggle_auto_control(data):
     key = data.get('key')
     state = data.get('state')
     print(f"Received toggle auto control: {key} = {state}")  # Debug print
-    if key not in ['AUTO_IRRIGATION', 'AUTO_LIGHT']:
+    if key not in ['AUTO_I', 'AUTO_L']:
         print(f"Invalid key for toggle auto control: {key}")
         return
 
@@ -237,17 +230,17 @@ def manual_control(data):
     key = data.get('key')
     state = data.get('state')
     print(f"Received manual control: {key} = {state}")  # Debug print
-    if key not in ['MANUAL_IRRIGATION', 'MANUAL_LIGHT']:
+    if key not in ['MAN_I', 'MAN_L']:
         print(f"Invalid key for manual control: {key}")
         return
 
     command = ""
-    if key == 'MANUAL_IRRIGATION':
-        command = f"MANUAL_IRRIGATION:{1 if state else 0}\n"
-    elif key == 'MANUAL_LIGHT':
+    if key == 'MAN_I':
+        command = f"MAN_I:{1 if state else 0}\n"
+    elif key == 'MAN_L':
         try:
             brightness = int(state)
-            command = f"MANUAL_LIGHT:{brightness}\n"
+            command = f"MAN_L:{brightness}\n"
         except ValueError:
             print(f"Invalid value for manual light: {state}")
             return

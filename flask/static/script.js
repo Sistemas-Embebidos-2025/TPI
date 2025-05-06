@@ -10,8 +10,8 @@ const eventTypeMap = {
 	1: "Auto Irrigation Stop",
 	2: "Manual Irrigation Start",
 	3: "Manual Irrigation Stop",
-	4: "Auto Light Adjust",
-	5: "Manual Light Adjust",
+	4: "Auto Light",
+	5: "Manual Light",
 	6: "Moisture Alert",
 	7: "Light Alert",
 	8: "Config Change"
@@ -84,11 +84,11 @@ function update_display(data) {
 
 // Threshold Controls
 $('.threshold-input').on('input', function () {
-	const key = $(this).data('type'); // e.g., MOISTURE_THRESH
+	const key = $(this).data('type'); // M_THRESH
 	const value = $(this).val();
 	$(`#${key}Value`).text(value);
 	// Use the command key expected by Arduino
-	const commandKey = `SET_${key}`; // e.g., SET_MOISTURE_THRESH
+	const commandKey = `${key}`; // M_THRESH
 	socket.emit('threshold_update', {key: commandKey, value});
 });
 
@@ -98,7 +98,7 @@ $('#autoIrrigationToggle').change(function () {
 	$('#irrigationModeStatus').text(state ? 'Auto' : 'Manual');
 	$('#irrigationControls').toggleClass('active', !state);
 	socket.emit('toggle_auto_control', {
-		key: 'AUTO_IRRIGATION',
+		key: 'AUTO_I',
 		state: state
 	});
 });
@@ -108,7 +108,7 @@ $('#autoLightToggle').change(function () {
 	$('#lightModeStatus').text(state ? 'Auto' : 'Manual');
 	$('#lightControls').toggleClass('active', !state);
 	socket.emit('toggle_auto_control', {
-		key: 'AUTO_LIGHT',
+		key: 'AUTO_L',
 		state: state
 	});
 });
@@ -119,7 +119,7 @@ $('#manualIrrigationToggle').click(() => {
 	const newState = !currentState;
 	$('#irrigationState').text(newState ? 'ON' : 'OFF');
 	socket.emit('manual_control', {
-		key: 'MANUAL_IRRIGATION',
+		key: 'MAN_I',
 		state: newState
 	});
 });
@@ -129,7 +129,7 @@ $('#manualLightSlider').on('input', function () {
 	const brightness = $(this).val();
 	$('#manualLightValue').text(brightness);
 	socket.emit('manual_control', {
-		key: 'MANUAL_LIGHT',
+		key: 'MAN_L',
 		state: brightness
 	});
 });

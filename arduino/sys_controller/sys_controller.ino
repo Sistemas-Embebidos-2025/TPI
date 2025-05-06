@@ -26,15 +26,15 @@ const int RECORD_SIZE = sizeof(Event);
 int nextLogAddress = 0;
 
 enum EventType {
-    AUTO_IRRIGATION_START,
-    AUTO_IRRIGATION_STOP,
-    MANUAL_IRRIGATION_START,
-    MANUAL_IRRIGATION_STOP,
-    AUTO_LIGHT_ADJUSTMENT,
-    MANUAL_LIGHT_ADJUSTMENT,
-    MOISTURE_ALERT,
-    LIGHT_ALERT,
-    CONFIG_CHANGE
+    AUTO_IRRIGATION_START,  // 0
+    AUTO_IRRIGATION_STOP,  // 1
+    MANUAL_IRRIGATION_START,  // 2
+    MANUAL_IRRIGATION_STOP, // 3
+    AUTO_LIGHT,  // 4
+    MANUAL_LIGHT,  // 5
+    MOISTURE_ALERT,  // 6
+    LIGHT_ALERT,  // 7
+    CONFIG_CHANGE  // 8
 };
 
 SemaphoreHandle_t eepromMutex;
@@ -43,8 +43,8 @@ SemaphoreHandle_t serialMutex;
 // Thresholds and State
 bool auto_irrigation = true;
 bool auto_light = true;
-uint16_t moisture_threshold = 10;
-uint16_t light_threshold = 300;
+uint16_t moisture_threshold = 100;
+uint16_t light_threshold = 100;
 volatile uint32_t current_time = 0;
 
 // RTOS Tasks
@@ -132,47 +132,43 @@ void clearLogs() {
         }
         nextLogAddress = 0;
         xSemaphoreGive(eepromMutex);
+    } else {
+        Serial.println(F("XD"));
     }
 }
 
 void handleCommand(const String &key, int val) {
     if (key == "TIME") {
         current_time = val;
-    } else if (key == "SET_MOISTURE_THRESH") {
+    } else if (key == "M_THRESH") {
         moisture_threshold = val;
         logEvent(CONFIG_CHANGE, moisture_threshold);
-    } else if (key == "SET_LIGHT_THRESH") {
+    } else if (key == "L_THRESH") {
         light_threshold = val;
         logEvent(CONFIG_CHANGE, light_threshold);
-    } else if (key == "AUTO_IRRIGATION") {
+    } else if (key == "AUTO_I") {
         auto_irrigation = (val == 1);
         logEvent(CONFIG_CHANGE, auto_irrigation ? 1 : 0);
-    } else if (key == "AUTO_LIGHT") {
+    } else if (key == "AUTO_L") {
         auto_light = (val == 1);
         logEvent(CONFIG_CHANGE, auto_light ? 1 : 0);
-    } else if (key == "MANUAL_IRRIGATION") {
+    } else if (key == "MAN_I") {
         bool on = (val == 1);
         for (int i = 0; i < numIrrigation; i++)
             digitalWrite(irrigationPins[i], on ? HIGH : LOW);
         logEvent(on ? MANUAL_IRRIGATION_START : MANUAL_IRRIGATION_STOP, val);
-    } else if (key == "MANUAL_LIGHT") {
+    } else if (key == "MAN_L") {
         int brightness = constrain(val, 0, 255);
         for (int i = 0; i < numLights; i++)
             analogWrite(lightPins[i], brightness);
-        logEvent(MANUAL_LIGHT_ADJUSTMENT, brightness);
-        xSemaphoreTake(serialMutex, portMAX_DELAY);
-        Serial.print("DEBUG[MANUAL_LIGHT]:");
-        Serial.println(brightness);
-        xSemaphoreGive(serialMutex);
+        logEvent(MANUAL_LIGHT, brightness);
     } else if (key == "GET_LOGS") {
-        xSemaphoreTake(serialMutex, portMAX_DELAY);
-        printLogs();
-        xSemaphoreGive(serialMutex);
+        if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+            printLogs();
+            xSemaphoreGive(serialMutex);
+        }
     } else if (key == "CLEAR_LOGS") {
         clearLogs();
-        xSemaphoreTake(serialMutex, portMAX_DELAY);
-        Serial.println("LOGS_CLEARED");
-        xSemaphoreGive(serialMutex);
     }
 }
 
@@ -182,12 +178,13 @@ void readSensorsTask(void *pvParameters) {
         uint16_t light = analogRead(LIGHT_SENSOR);
 
         // Send sensor readings via serial
-        xSemaphoreTake(serialMutex, portMAX_DELAY);
-        Serial.print("SENSORS:MOISTURE:");
-        Serial.print(moisture);
-        Serial.print(";LIGHT:");
-        Serial.println(light);
-        xSemaphoreGive(serialMutex);
+        if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+            Serial.print("SENSORS:MOISTURE:");
+            Serial.print(moisture);
+            Serial.print(";LIGHT:");
+            Serial.println(light);
+            xSemaphoreGive(serialMutex);
+        }
 
         if (moisture < moisture_threshold) {
             logEvent(MOISTURE_ALERT, moisture);
@@ -226,7 +223,7 @@ void autoControlTask(void *pvParameters) {
             for (int i = 0; i < numLights; i++)
                 analogWrite(lightPins[i], brightness);
             if (light < light_threshold) {
-                logEvent(AUTO_LIGHT_ADJUSTMENT, brightness);
+                logEvent(AUTO_LIGHT, brightness);
             }
         }
 
@@ -238,21 +235,48 @@ void serialComTask(void *pvParameters) {
     while (1) {
         if (Serial.available()) {
             String cmd = Serial.readStringUntil('\n');
-            cmd.trim();
+            cmd.trim();  // Remove leading/trailing whitespace
+            Serial.print(F("Received command: "));  // Debugging
+            Serial.println(cmd);
+
+            // Debug raw command bytes
+            Serial.print(F("Raw command bytes: "));
+            for (size_t i = 0; i < cmd.length(); i++) {
+                Serial.print((int)cmd[i]);
+                Serial.print(" ");
+            }
+            Serial.println();
+
             int colon = cmd.indexOf(':');
             if (colon != -1) {
                 String key = cmd.substring(0, colon);
-                key.trim();
-                int val = cmd.substring(colon + 1).toInt();
+                key.trim();  // Remove any extra spaces
+                String valStr = cmd.substring(colon + 1);
+                valStr.trim();  // Remove any extra spaces
+
+                // Ensure valStr contains only numeric characters
+                for (int i = 0; i < valStr.length(); i++) {
+                    if (!isDigit(valStr[i])) {
+                        Serial.println(F("Error: Non-numeric value in command"));
+                        return;
+                    }
+                }
+
+                int val = valStr.toInt();
+                Serial.print(F("Parsed key: "));  // Debugging
+                Serial.println(key);
+                Serial.print(F("Parsed value: "));  // Debugging
+                Serial.println(val);
                 handleCommand(key, val);
             } else {
-                xSemaphoreTake(serialMutex, portMAX_DELAY);
-                Serial.print("UNKNOWN_CMD:");
-                Serial.println(cmd);
-                xSemaphoreGive(serialMutex);
+                if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+                    Serial.print(F("UNKNOWN_CMD:"));
+                    Serial.println(cmd);
+                    xSemaphoreGive(serialMutex);
+                }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
