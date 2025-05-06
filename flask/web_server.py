@@ -21,8 +21,8 @@ except serial.SerialException as port_error:
 lock = Lock()
 
 # Threshold defaults
-MOISTURE_THRESH = 100
-LIGHT_THRESH = 100
+MOISTURE_THRESH = 500
+LIGHT_THRESH = 500
 
 # NTP Server configuration
 NTP_SERVER = 'pool.ntp.org'
@@ -153,11 +153,10 @@ def serial_reader():
                 print("Detected log header, starting log capture.")
                 reading_logs = True  # Start reading logs
                 current_logs = []  # Clear previous logs
-            elif line.startswith("SENSORS:"):
-                line_data = line.replace("SENSORS:", "")
+            elif line.startswith("M:"):
                 data = {}
-                parts = line_data.split(';')
-                print(f"Sensor data received: {line_data}")  # Debug print
+                parts = line.split(';')
+                print(f"Sensor data received: {line}")  # Debug print
                 for part in parts:
                     if ':' in part:
                         key, val_str = part.split(':', 1)
@@ -167,9 +166,13 @@ def serial_reader():
                             print(f"Warning: Could not parse sensor value '{val_str}' for key '{key}'")
                             data[key] = 0
                 socketio.emit('sensor_update', {
-                    'moisture': data.get('MOISTURE', 0),
-                    'light': data.get('LIGHT', 0)
+                    'moisture': data.get('M', 0),
+                    'light': data.get('L', 0)
                 })
+            elif line.startswith("UNKNOWN_CMD:"):
+                # Handle unknown command from Arduino
+                print(f"Arduino error handling command: {line}")
+                socketio.emit('log_error', {'message': f'Arduino error handling command: {line}'})
             else:
                 # Emit other non-log, non-sensor data if needed
                 if line:
@@ -198,7 +201,7 @@ def threshold_update(data):
 
     try:
         val_int = int(value)  # Check if value is integer
-        command = f"{key}:{val_int}\n"  # Construct command like "SET_MOISTURE_THRESH:500\n"
+        command = f"{key}:{val_int}\n"  # Construct command like "M_THRESH:500\n"
         with lock:
             ser.write(command.encode())
         print(f"Sent command: {command.strip()}")
@@ -239,7 +242,7 @@ def manual_control(data):
         command = f"MAN_I:{1 if state else 0}\n"
     elif key == 'MAN_L':
         try:
-            brightness = int(state)
+            brightness = min(max(int(state), 0), 255)  # Ensure brightness is between 0 and 255
             command = f"MAN_L:{brightness}\n"
         except ValueError:
             print(f"Invalid value for manual light: {state}")
@@ -271,7 +274,6 @@ def handle_log_request():
     except Exception as e:
         print(f"Error sending GET_LOGS command: {e}")
         socketio.emit('log_error', {'message': f'Error sending command to Arduino: {e}'})
-
 
 @socketio.on("clear_logs_request")
 def handle_clear_logs_request():

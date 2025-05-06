@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <EEPROM.h>
 #include <semphr.h>
@@ -58,6 +59,7 @@ int findNextEEPROMAddress();
 
 void setup() {
     Serial.begin(115200);
+    EEPROM.begin();
 
     // Init irrigation pins
     for (int i = 0; i < numIrrigation; i++) {
@@ -71,15 +73,15 @@ void setup() {
         analogWrite(lightPins[i], 0);  // off
     }
 
-    EEPROM.begin();
     eepromMutex = xSemaphoreCreateMutex();
     serialMutex = xSemaphoreCreateMutex();
     sensorMutex = xSemaphoreCreateMutex();
     nextLogAddress = findNextEEPROMAddress();
 
+    
     xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 2, NULL);
     xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 2, NULL);
-    xTaskCreate(serialComTask, "Serial", 256, NULL, 1, NULL);
+    xTaskCreate(serialComTask, "Serial", 258, NULL, 2, NULL);
     xTaskCreate(updateTimeTask, "Time", 128, NULL, 1, NULL);
 
     vTaskStartScheduler();
@@ -167,6 +169,8 @@ void handleCommand(const String &key, int val) {
         }
     } else if (key == "CLEAR_LOGS") {
         clearLogs();
+    } else {
+        unknownCommand(key + ":" + String(val));
     }
 }
 
@@ -182,11 +186,13 @@ void setLightPins(int brightness) {
     }
 }
 
-// void monitorStackUsage() {
-//     UBaseType_t highWaterMark = uxTaskGetStackHighWaterMark(NULL);
-//     Serial.print("Stack high water mark: ");
-//     Serial.println(highWaterMark);
-// }
+void unknownCommand(const String &cmd) {
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.print(F("UNKNOWN_CMD: "));
+        Serial.println(cmd);
+        xSemaphoreGive(serialMutex);
+    }
+}
 
 void readSensorsTask(void *pvParameters) {
     while (1) {
@@ -214,7 +220,7 @@ void readSensorsTask(void *pvParameters) {
         if (light < light_threshold) {
             logEvent(LIGHT_ALERT, light);
         }
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(1500));
     }
 }
 
@@ -243,15 +249,15 @@ void autoControlTask(void *pvParameters) {
         // Auto light adjustment
         if (auto_light) {
             int brightness =
-                map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
+            map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
             brightness = constrain(brightness, 0, 255);
             setLightPins(brightness);
             if (localL < light_threshold) {
                 logEvent(AUTO_LIGHT, brightness);
             }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -260,21 +266,24 @@ void serialComTask(void *pvParameters) {
         if (Serial.available()) {
             String cmd = Serial.readStringUntil('\n');
             cmd.trim();  // Remove leading/trailing whitespace
-            // Serial.print(F("Received command: "));  // Debugging
-            // Serial.println(cmd);
+            Serial.print(F("Received command: "));  // Debugging
+            Serial.println(cmd);
 
             // Debug raw command bytes
-            // Serial.print(F("Raw command bytes: "));
-            // for (size_t i = 0; i < cmd.length(); i++) {
-            //     Serial.print((int)cmd[i]);
-            //     Serial.print(" ");
-            // }
-            // Serial.println();
+            Serial.print(F("Raw command bytes: "));
+            for (size_t i = 0; i < cmd.length(); i++) {
+                Serial.print((int)cmd[i]);
+                Serial.print(" ");
+            }
+            Serial.println();
 
             int colon = cmd.indexOf(':');
             if (colon != -1) {
+                Serial.println(colon);
                 String key = cmd.substring(0, colon);
+                Serial.println(key);
                 key.trim();  // Remove any extra spaces
+                Serial.println(key);
                 String valStr = cmd.substring(colon + 1);
                 valStr.trim();  // Remove any extra spaces
 
@@ -288,22 +297,19 @@ void serialComTask(void *pvParameters) {
                 }
 
                 int val = valStr.toInt();
-                // Serial.print(F("Parsed key: "));  // Debugging
-                // Serial.println(key);
-                // Serial.print(F("Parsed value: "));  // Debugging
-                // Serial.println(val);
+                Serial.print(F("Parsed key: "));  // Debugging
+                Serial.println(key);
+                Serial.print(F("Parsed value: "));  // Debugging
+                Serial.println(val);
                 handleCommand(key, val);
             } else {
-                if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-                    Serial.print(F("UNKNOWN_CMD: "));
-                    Serial.println(cmd);
-                    xSemaphoreGive(serialMutex);
-                }
+                unknownCommand(cmd);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(500));
+        vTaskDelay(pdMS_TO_TICKS(400));
     }
 }
+
 
 // Update time task to handle NTP updates
 void updateTimeTask(void *pvParameters) {

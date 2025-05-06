@@ -82,16 +82,6 @@ function update_display(data) {
 	lightChart.update();
 }
 
-// Threshold Controls
-$('.threshold-input').on('input', function () {
-	const key = $(this).data('type'); // M_THRESH
-	const value = $(this).val();
-	$(`#${key}Value`).text(value);
-	// Use the command key expected by Arduino
-	const commandKey = `${key}`; // M_THRESH
-	socket.emit('threshold_update', {key: commandKey, value});
-});
-
 // Auto Mode Toggles
 $('#autoIrrigationToggle').change(function () {
 	const state = $(this).prop('checked');
@@ -133,6 +123,28 @@ $('#manualLightSlider').on('input', function () {
 		state: brightness
 	});
 });
+
+// Threshold Controls
+$('.threshold-input').on('input', function () {
+    const key = $(this).data('type'); // M_THRESH or L_THRESH
+    const value = $(this).val();
+    $(`#${key}Value`).text(value);
+    // Use the command key expected by Arduino
+    const commandKey = `${key}`;
+    socket.emit('threshold_update', { key: commandKey, value });
+});
+
+// Add these functions for updating and sending threshold values
+function updateThresholdDisplay(slider, displayId) {
+    document.getElementById(displayId).textContent = slider.value;
+}
+
+function sendThresholdUpdate(slider) {
+    const type = slider.getAttribute('data-type');
+    const value = slider.value;
+    socket.emit('threshold_update', { key: type, value: value });
+    console.log(`Sent threshold update: ${type} = ${value}`);
+}
 
 // Event Listener for Get Logs Button
 if (getLogsButton) { // Check if button exists

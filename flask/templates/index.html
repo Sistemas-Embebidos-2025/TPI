@@ -30,17 +30,20 @@
     <!-- Threshold Controls -->
     <!--TODO: Sync thresholds-->
     <div class="card">
-        <h2>Threshold Settings</h2>
         <div class="control-group">
             <label>Moisture Threshold:
-                <input type="range" class="threshold-input" data-type="M_THRESH" min="0" max="1023" value="500">
+                <input type="range" class="threshold-input" data-type="M_THRESH" min="0" max="1023" value="500" 
+                oninput="updateThresholdDisplay(this, 'MOISTURE_THRESHValue')" 
+                onchange="sendThresholdUpdate(this)">
                 <span id="MOISTURE_THRESHValue" class="value-display">500</span>
             </label>
         </div>
         <div class="control-group">
             <label>Light Threshold:
-                <input type="range" class="threshold-input" data-type="L_THRESH" min="0" max="1023" value="100">
-                <span id="LIGHT_THRESHValue" class="value-display">100</span>
+                <input type="range" class="threshold-input" data-type="L_THRESH" min="0" max="1023" value="500" 
+                       oninput="updateThresholdDisplay(this, 'LIGHT_THRESHValue')" 
+                       onchange="sendThresholdUpdate(this)">
+                <span id="LIGHT_THRESHValue" class="value-display">500</span>
             </label>
         </div>
     </div>
