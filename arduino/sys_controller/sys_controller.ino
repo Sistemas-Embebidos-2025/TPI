@@ -223,7 +223,7 @@ int findNextEEPROMAddress() {
 // Serial
 void printLogs() {
     Event e;
-    Serial.println(F("TS,TYPE,VALUE"));  // header row (optional)
+    Serial.println(F("TS,TYPE,VALUE"));  // header row
     for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
         EEPROM.get(addr, e);
         // We use timestamp==0xFFFFFFFF to mark “empty” slots
