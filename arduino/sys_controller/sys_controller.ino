@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <EEPROM.h>
 #include <semphr.h>
@@ -42,7 +43,7 @@ SemaphoreHandle_t serialMutex;
 // Thresholds and State
 bool auto_irrigation = true;
 bool auto_light = true;
-uint16_t moisture_threshold = 500;
+uint16_t moisture_threshold = 10;
 uint16_t light_threshold = 300;
 volatile uint32_t current_time = 0;
 
@@ -83,6 +84,97 @@ void setup() {
 }
 
 void loop() {}
+
+void logEvent(uint8_t type, uint16_t value) {
+    if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
+        Event newEvent = {current_time, type, value};
+        EEPROM.put(nextLogAddress, newEvent);
+        nextLogAddress = (nextLogAddress + RECORD_SIZE) % EEPROM.length();
+        xSemaphoreGive(eepromMutex);
+    }
+}
+
+int findNextEEPROMAddress() {
+    Event event;
+    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+        EEPROM.get(addr, event);
+        if (event.timestamp == 0xFFFFFFFF) return addr;
+    }
+    return 0;
+}
+
+// Read through EEPROM from 0 up to first empty slot and dump each Event over
+// Serial
+void printLogs() {
+    Event e;
+    Serial.println(F("TS,TYPE,VALUE"));  // header row
+    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+        EEPROM.get(addr, e);
+        // We use timestamp==0xFFFFFFFF to mark “empty” slots
+        if (e.timestamp == 0xFFFFFFFFUL) break;
+
+        // Print as CSV: timestamp,event_type,event_value
+        Serial.print(e.timestamp);
+        Serial.print(',');
+        Serial.print(e.event_type);
+        Serial.print(',');
+        Serial.println(e.value);
+    }
+    Serial.println(F("END_LOG"));  // end of log marker
+}
+
+// Clear all logs from EEPROM
+void clearLogs() {
+    if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
+        for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+            Event emptyEvent = {0xFFFFFFFF, 0, 0};
+            EEPROM.put(addr, emptyEvent);
+        }
+        nextLogAddress = 0;
+        xSemaphoreGive(eepromMutex);
+    }
+}
+
+void handleCommand(const String &key, int val) {
+    if (key == "TIME") {
+        current_time = val;
+    } else if (key == "SET_MOISTURE_THRESH") {
+        moisture_threshold = val;
+        logEvent(CONFIG_CHANGE, moisture_threshold);
+    } else if (key == "SET_LIGHT_THRESH") {
+        light_threshold = val;
+        logEvent(CONFIG_CHANGE, light_threshold);
+    } else if (key == "AUTO_IRRIGATION") {
+        auto_irrigation = (val == 1);
+        logEvent(CONFIG_CHANGE, auto_irrigation ? 1 : 0);
+    } else if (key == "AUTO_LIGHT") {
+        auto_light = (val == 1);
+        logEvent(CONFIG_CHANGE, auto_light ? 1 : 0);
+    } else if (key == "MANUAL_IRRIGATION") {
+        bool on = (val == 1);
+        for (int i = 0; i < numIrrigation; i++)
+            digitalWrite(irrigationPins[i], on ? HIGH : LOW);
+        logEvent(on ? MANUAL_IRRIGATION_START : MANUAL_IRRIGATION_STOP, val);
+    } else if (key == "MANUAL_LIGHT") {
+        int brightness = constrain(val, 0, 255);
+        for (int i = 0; i < numLights; i++)
+            analogWrite(lightPins[i], brightness);
+        logEvent(MANUAL_LIGHT_ADJUSTMENT, brightness);
+        xSemaphoreTake(serialMutex, portMAX_DELAY);
+        Serial.print("DEBUG[MANUAL_LIGHT]:");
+        Serial.println(brightness);
+        xSemaphoreGive(serialMutex);
+    } else if (key == "GET_LOGS") {
+        xSemaphoreTake(serialMutex, portMAX_DELAY);
+        printLogs();
+        xSemaphoreGive(serialMutex);
+    } else if (key == "CLEAR_LOGS") {
+        clearLogs();
+        xSemaphoreTake(serialMutex, portMAX_DELAY);
+        Serial.println("LOGS_CLEARED");
+        xSemaphoreGive(serialMutex);
+    }
+}
 
 void readSensorsTask(void *pvParameters) {
     while (1) {
@@ -152,43 +244,15 @@ void serialComTask(void *pvParameters) {
                 String key = cmd.substring(0, colon);
                 key.trim();
                 int val = cmd.substring(colon + 1).toInt();
-
-                if (key == "TIME") {
-                    current_time = val;
-                    Serial.print("TIME_SET:");
-                    Serial.println(current_time);
-                } else if (key == "SET_MOISTURE_THRESH") {
-                    moisture_threshold = val;
-                    logEvent(CONFIG_CHANGE, moisture_threshold);
-                } else if (key == "SET_LIGHT_THRESH") {
-                    light_threshold = val;
-                    logEvent(CONFIG_CHANGE, light_threshold);
-                } else if (key == "AUTO_IRRIGATION") {
-                    auto_irrigation = (val == 1);
-                    logEvent(CONFIG_CHANGE, auto_irrigation ? 1 : 0);
-                } else if (key == "AUTO_LIGHT") {
-                    auto_light = (val == 1);
-                    logEvent(CONFIG_CHANGE, auto_light ? 1 : 0);
-                } else if (key == "MANUAL_IRRIGATION") {
-                    bool on = (val == 1);
-                    for (int i = 0; i < numIrrigation; i++)
-                        digitalWrite(irrigationPins[i], on ? HIGH : LOW);
-                    logEvent(
-                        on ? MANUAL_IRRIGATION_START : MANUAL_IRRIGATION_STOP,
-                        val);
-                } else if (key == "MANUAL_LIGHT") {
-                    int brightness = constrain(val, 0, 255);
-                    for (int i = 0; i < numLights; i++)
-                        analogWrite(lightPins[i], brightness);
-                    logEvent(MANUAL_LIGHT_ADJUSTMENT, brightness);
-                } else if (key == "GET_LOGS") {
-                    xSemaphoreTake(serialMutex, portMAX_DELAY);
-                    printLogs();
-                    xSemaphoreGive(serialMutex);
-                }
+                handleCommand(key, val);
+            } else {
+                xSemaphoreTake(serialMutex, portMAX_DELAY);
+                Serial.print("UNKNOWN_CMD:");
+                Serial.println(cmd);
+                xSemaphoreGive(serialMutex);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -197,44 +261,6 @@ void updateTimeTask(void *pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
     while (1) {
         current_time++;  // Increment even if no NTP updates
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(60000));
     }
-}
-
-void logEvent(uint8_t type, uint16_t value) {
-    if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
-        Event newEvent = {current_time, type, value};
-        EEPROM.put(nextLogAddress, newEvent);
-        nextLogAddress = (nextLogAddress + RECORD_SIZE) % EEPROM.length();
-        xSemaphoreGive(eepromMutex);
-    }
-}
-
-int findNextEEPROMAddress() {
-    Event event;
-    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
-        EEPROM.get(addr, event);
-        if (event.timestamp == 0xFFFFFFFF) return addr;
-    }
-    return 0;
-}
-
-// Read through EEPROM from 0 up to first empty slot and dump each Event over
-// Serial
-void printLogs() {
-    Event e;
-    Serial.println(F("TS,TYPE,VALUE"));  // header row
-    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
-        EEPROM.get(addr, e);
-        // We use timestamp==0xFFFFFFFF to mark “empty” slots
-        if (e.timestamp == 0xFFFFFFFFUL) break;
-
-        // Print as CSV: timestamp,event_type,event_value
-        Serial.print(e.timestamp);
-        Serial.print(',');
-        Serial.print(e.event_type);
-        Serial.print(',');
-        Serial.println(e.value);
-    }
-    Serial.println(F("END_LOG"));  // end of log marker
 }

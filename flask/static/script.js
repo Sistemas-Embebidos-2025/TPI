@@ -1,7 +1,8 @@
 const socket = io();  // Connect to the web socket  "http://" + location.hostname + ":" + location.port
 const logTableBody = document.getElementById('logTable')?.querySelector('tbody'); // Get table body
-const getLogsButton = document.getElementById('getLogsButton'); // Get button
-const logStatus = document.getElementById('logStatus'); // Get status element
+const getLogsButton = document.getElementById('getLogsButton');
+const logStatus = document.getElementById('logStatus');
+const clearLogsButton = document.getElementById('clearLogsButton');
 
 // Map Arduino EventType enum values to readable strings
 const eventTypeMap = {
@@ -181,6 +182,20 @@ socket.on('log_data', function (data) { // Listen for logs from backend
 	}
 });
 
+if (clearLogsButton) { // Check if button exists
+    clearLogsButton.addEventListener('click', () => {
+        console.log("Clearing logs..."); // Log action
+        if (logStatus) logStatus.textContent = 'Clearing logs...'; // Update status
+        socket.emit('clear_logs_request'); // Emit event to backend
+    });
+}
+
+// SocketIO Listener for Clear Logs Response
+socket.on('clear_logs_response', function (data) {
+    console.log("Clear logs response:", data.message); // Log response
+    if (logStatus) logStatus.textContent = data.message; // Update status
+    if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
+});
 
 // SocketIO Listener for Potential Errors
 socket.on('log_error', function (data) { // Listen for errors from backend

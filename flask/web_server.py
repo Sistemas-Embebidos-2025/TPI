@@ -26,7 +26,7 @@ LIGHT_THRESH = 300
 
 # NTP Server configuration
 NTP_SERVER = 'pool.ntp.org'
-TIME_ZONE_OFFSET = -3  # Argentina Time (UTC-3)
+TIME_ZONE_OFFSET = 0  # Argentina Time (UTC-3)
 
 
 # NTP and Time Sync Functions (keep as is)
@@ -42,18 +42,33 @@ def get_ntp_time():
         return (datetime.now() + timedelta(hours=TIME_ZONE_OFFSET)).timestamp()
 
 
-def sync_time():
-    while True:
-        if not ser: time.sleep(60); continue  # Don't try if serial is not open
-        try:
-            current_time = int(get_ntp_time())
-            with lock:
-                ser.write(f"TIME:{current_time}\n".encode())
-            print(f"Synced time: {datetime.fromtimestamp(current_time)}")
-        except Exception as e:
-            print(f"Time sync failed: {e}")
+def sync_time_internal():
+    """Attempts a single time sync."""
+    if not ser:
+        print("sync_time_internal: Serial port not available.")
+        return False  # Indicate failure
+    try:
+        current_time = int(get_ntp_time())
+        command = f"TIME:{current_time}\n"
+        with lock:
+            ser.write(command.encode())
+        print(f"Time sync command sent: TIME:{current_time} | {datetime.fromtimestamp(current_time)}")
+        time.sleep(0.5)
+        return True  # Indicate success
+    except ntplib.NTPException as e:
+        print(f"Initial NTP sync failed: {e}")
+        return False
+    except Exception as e:
+        print(f"Initial Time sync failed (other error): {e}")
+        return False
 
-        time.sleep(3600)  # Sync every hour
+
+def sync_time():
+    """Periodic time synchronization loop."""
+    print("Starting periodic time sync...")
+    while True:
+        sync_time_internal()  # Attempt sync
+        time.sleep(3600)  # Sync periodically (e.g., every hour)
 
 
 def serial_reader():
@@ -265,12 +280,41 @@ def handle_log_request():
         socketio.emit('log_error', {'message': f'Error sending command to Arduino: {e}'})
 
 
+@socketio.on("clear_logs_request")
+def handle_clear_logs_request():
+    """
+    Handles request from frontend to clear logs.
+    """
+    if not ser:  # Check serial port
+        print("Clear logs request failed: Serial port not available.")
+        socketio.emit('clear_logs_response', {'message': 'Serial port not available.'})
+        return
+
+    print("Received clear logs request from client.")
+    command = "CLEAR_LOGS:0\n"  # Command to clear logs on Arduino
+    try:
+        with lock:
+            ser.write(command.encode())  # Send command to Arduino
+        print(f"Sent command: {command.strip()}")
+        socketio.emit('clear_logs_response', {'message': 'Logs cleared successfully.'})
+    except Exception as e:
+        print(f"Error sending CLEAR_LOGS command: {e}")
+        socketio.emit('clear_logs_response', {'message': f'Error clearing logs: {e}'})
+
+
 if __name__ == '__main__':
     if ser:
         print(f"Serial port {ser.name} opened successfully.")
+        print("Attempting initial time sync...")
+        if not sync_time_internal():
+             print("Initial time sync failed. Arduino time may be incorrect until next sync.")
+        else:
+             print("Initial time sync command sent successfully.")
         Thread(target=sync_time, daemon=True).start()
         Thread(target=serial_reader, daemon=True).start()
     else:
-        print("Running without serial connection. Some features will be disabled.")
+        print("Running without serial connection.")
 
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)  # allow_unsafe_werkzeug for development auto-reload
+
+# TODO: When light threshold is set to 0 the light should be turned off
