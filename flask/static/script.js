@@ -5,15 +5,15 @@ const logStatus = document.getElementById('logStatus'); // Get status element
 
 // Map Arduino EventType enum values to readable strings
 const eventTypeMap = {
-    0: "Auto Irrigation Start",
-    1: "Auto Irrigation Stop",
-    2: "Manual Irrigation Start",
-    3: "Manual Irrigation Stop",
-    4: "Auto Light Adjust",
-    5: "Manual Light Adjust",
-    6: "Moisture Alert",
-    7: "Light Alert",
-    8: "Config Change"
+	0: "Auto Irrigation Start",
+	1: "Auto Irrigation Stop",
+	2: "Manual Irrigation Start",
+	3: "Manual Irrigation Stop",
+	4: "Auto Light Adjust",
+	5: "Manual Light Adjust",
+	6: "Moisture Alert",
+	7: "Light Alert",
+	8: "Config Change"
 };
 
 let moistureChart, lightChart;
@@ -133,59 +133,59 @@ $('#manualLightSlider').on('input', function () {
 	});
 });
 
-// --- Event Listener for Get Logs Button ---
+// Event Listener for Get Logs Button
 if (getLogsButton) { // Check if button exists
-    getLogsButton.addEventListener('click', () => {
-        console.log("Requesting logs..."); // Log action
-        if(logStatus) logStatus.textContent = 'Requesting logs...'; // Update status
-        socket.emit('get_logs_request'); // Emit event to backend
-        // Clear the table while waiting for new logs
-        if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
-    });
+	getLogsButton.addEventListener('click', () => {
+		console.log("Requesting logs..."); // Log action
+		if (logStatus) logStatus.textContent = 'Requesting logs...'; // Update status
+		socket.emit('get_logs_request'); // Emit event to backend
+		// Clear the table while waiting for new logs
+		if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
+	});
 }
 
 
-// --- SocketIO Listener for Log Data ---
-socket.on('log_data', function(data) { // Listen for logs from backend
-    console.log("Received logs:", data.logs); // Log received data
-    if (logTableBody && data.logs) { // Check if table body and logs exist
-        logTableBody.innerHTML = ''; // Clear previous logs (optional, could append too)
+// SocketIO Listener for Log Data
+socket.on('log_data', function (data) { // Listen for logs from backend
+	console.log("Received logs:", data.logs); // Log received data
+	if (logTableBody && data.logs) { // Check if table body and logs exist
+		logTableBody.innerHTML = ''; // Clear previous logs (optional, could append too)
 
-        if (data.logs.length === 0) {
-             if(logStatus) logStatus.textContent = 'No logs found or received.'; // Update status
-             return;
-        }
+		if (data.logs.length === 0) {
+			if (logStatus) logStatus.textContent = 'No logs found or received.'; // Update status
+			return;
+		}
 
-        data.logs.forEach(log => { // Iterate through each log entry
-            const row = logTableBody.insertRow(); // Create new table row
+		data.logs.forEach(log => { // Iterate through each log entry
+			const row = logTableBody.insertRow(); // Create new table row
 
-            const timestampCell = row.insertCell();
-            // Convert Unix timestamp to readable date/time
-            const date = new Date(log.timestamp * 1000); // Arduino sends seconds timestamp
-            timestampCell.textContent = date.toLocaleString(); // Format date nicely
+			const timestampCell = row.insertCell();
+			// Convert Unix timestamp to readable date/time
+			const date = new Date(log.timestamp * 1000); // Arduino sends seconds timestamp
+			timestampCell.textContent = date.toLocaleString(); // Format date nicely
 
-            const typeCell = row.insertCell();
-            typeCell.textContent = log.type; // Show raw type number
+			const typeCell = row.insertCell();
+			typeCell.textContent = log.type; // Show raw type number
 
-            const valueCell = row.insertCell();
-            valueCell.textContent = log.value; // Show raw value
+			const valueCell = row.insertCell();
+			valueCell.textContent = log.value; // Show raw value
 
-             const descriptionCell = row.insertCell(); // Add a cell for description
-             descriptionCell.textContent = eventTypeMap[log.type] || "Unknown Event"; // Map type to string
-        });
+			const descriptionCell = row.insertCell(); // Add a cell for description
+			descriptionCell.textContent = eventTypeMap[log.type] || "Unknown Event"; // Map type to string
+		});
 
-        if(logStatus) logStatus.textContent = `Received ${data.logs.length} log entries.`; // Update status
-    } else {
-        console.error("Log table body not found or no logs received."); // Error handling
-        if(logStatus) logStatus.textContent = 'Error displaying logs.'; // Update status
-    }
+		if (logStatus) logStatus.textContent = `Received ${data.logs.length} log entries.`; // Update status
+	} else {
+		console.error("Log table body not found or no logs received."); // Error handling
+		if (logStatus) logStatus.textContent = 'Error displaying logs.'; // Update status
+	}
 });
 
 
-// --- SocketIO Listener for Potential Errors ---
-socket.on('log_error', function(data) { // Listen for errors from backend
+// SocketIO Listener for Potential Errors
+socket.on('log_error', function (data) { // Listen for errors from backend
 	console.error("Log retrieval error:", data.message); // Log error
-	if(logStatus) logStatus.textContent = `Error: ${data.message}`; // Display error
+	if (logStatus) logStatus.textContent = `Error: ${data.message}`; // Display error
 });
 
 // Initialize charts when page loads

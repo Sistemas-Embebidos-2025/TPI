@@ -236,4 +236,5 @@ void printLogs() {
         Serial.print(',');
         Serial.println(e.value);
     }
+    Serial.println(F("END_LOG"));  // end of log marker
 }
