@@ -7,7 +7,6 @@
             integrity="sha384-mkQ3/7FUtcGyoppY6bz/PORYoGqOl7/aSUMn2ymDOJcapfS6PHqxhRTMh1RR0Q6+"
             crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- <script defer src="script.js"></script> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
@@ -32,18 +31,18 @@
     <div class="card">
         <div class="control-group">
             <label>Moisture Threshold:
-                <input type="range" class="threshold-input" data-type="M_THRESH" min="0" max="1023" value="500" 
-                oninput="updateThresholdDisplay(this, 'MOISTURE_THRESHValue')" 
+                <input type="range" class="threshold-input" data-type="MT" min="0" max="1023" value="500"
+                oninput="updateThresholdDisplay(this, 'MTValue')"
                 onchange="sendThresholdUpdate(this)">
-                <span id="MOISTURE_THRESHValue" class="value-display">500</span>
+                <span id="MTValue" class="value-display">500</span>
             </label>
         </div>
         <div class="control-group">
             <label>Light Threshold:
-                <input type="range" class="threshold-input" data-type="L_THRESH" min="0" max="1023" value="500" 
-                       oninput="updateThresholdDisplay(this, 'LIGHT_THRESHValue')" 
+                <input type="range" class="threshold-input" data-type="LT" min="0" max="1023" value="500"
+                       oninput="updateThresholdDisplay(this, 'LTValue')"
                        onchange="sendThresholdUpdate(this)">
-                <span id="LIGHT_THRESHValue" class="value-display">500</span>
+                <span id="LTValue" class="value-display">500</span>
             </label>
         </div>
     </div>

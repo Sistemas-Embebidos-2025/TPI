@@ -4,16 +4,18 @@
 #include <semphr.h>
 #include <task.h>
 
+// TODO: Prevent logging same event multiple times (LOW_MOISTURE)
+
 // Pin Definitions
 #define MOISTURE_SENSOR A2
 #define LIGHT_SENSOR A3
 
 // Irrigation on pins 6 & 7
-const int irrigationPins[] = {6, 7, 8};
+const int irrigationPins[] = {6};
 const int numIrrigation = sizeof(irrigationPins) / sizeof(irrigationPins[0]);
 
 // Lighting (PWM) on pins 9, 10, 11, 12
-const int lightPins[] = {9, 10, 11, 12};
+const int lightPins[] = {8, 9, 10, 11, 12};
 const int numLights = sizeof(lightPins) / sizeof(lightPins[0]);
 
 // EEPROM Event Log
@@ -26,15 +28,14 @@ const int RECORD_SIZE = sizeof(Event);
 int nextLogAddress = 0;
 
 enum EventType {
-    AUTO_IRRIGATION_START,    // 0
-    AUTO_IRRIGATION_STOP,     // 1
-    MANUAL_IRRIGATION_START,  // 2
-    MANUAL_IRRIGATION_STOP,   // 3
-    AUTO_LIGHT,               // 4
-    MANUAL_LIGHT,             // 5
-    MOISTURE_ALERT,           // 6
-    LIGHT_ALERT,              // 7
-    CONFIG_CHANGE             // 8
+    AUTO_IRRIGATION,  // 0
+    MAN_IRRIGATION,   // 1
+    AUTO_LIGHT,       // 2
+    MAN_LIGHT,        // 3
+    LOW_MOISTURE,     // 4
+    LOW_LIGHT,        // 5
+    LIGHT_TH,         // 6
+    MOIST_TH          // 7
 };
 
 SemaphoreHandle_t eepromMutex;
@@ -78,7 +79,6 @@ void setup() {
     sensorMutex = xSemaphoreCreateMutex();
     nextLogAddress = findNextEEPROMAddress();
 
-    
     xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 2, NULL);
     xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 2, NULL);
     xTaskCreate(serialComTask, "Serial", 258, NULL, 2, NULL);
@@ -108,23 +108,25 @@ int findNextEEPROMAddress() {
 }
 
 // Read through EEPROM from 0 up to first empty slot and dump each Event over
-// Serial
 void printLogs() {
     Event e;
-    Serial.println(F("TS,TYPE,VALUE"));  // header row
-    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
-        EEPROM.get(addr, e);
-        // We use timestamp==0xFFFFFFFF to mark “empty” slots
-        if (e.timestamp == 0xFFFFFFFFUL) break;
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.println(F("TS,TYPE,VALUE"));  // header row
+        for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+            EEPROM.get(addr, e);
+            // We use timestamp==0xFFFFFFFF to mark “empty” slots
+            if (e.timestamp == 0xFFFFFFFFUL || e.timestamp == 0) break;
 
-        // Print as CSV: timestamp,event_type,event_value
-        Serial.print(e.timestamp);
-        Serial.print(F(","));
-        Serial.print(e.event_type);
-        Serial.print(F(","));
-        Serial.println(e.value);
+            // Print as CSV: timestamp,event_type,event_value
+            Serial.print(e.timestamp);
+            Serial.print(F(","));
+            Serial.print(e.event_type);
+            Serial.print(F(","));
+            Serial.println(e.value);
+        }
+        Serial.println(F("EL"));  // end of log marker
+        xSemaphoreGive(serialMutex);
     }
-    Serial.println(F("END_LOG"));  // end of log marker
 }
 
 // Clear all logs from EEPROM
@@ -139,39 +141,55 @@ void clearLogs() {
     }
 }
 
-void handleCommand(const String &key, int val) {
-    if (key == "TIME") {
-        current_time = val;
-    } else if (key == "M_THRESH") {
-        moisture_threshold = val;
-        logEvent(CONFIG_CHANGE, moisture_threshold);
-    } else if (key == "L_THRESH") {
+void handleCommand(const String &cmd) {
+    if (cmd[0] == 'T') {
+        current_time = cmd.substring(1).toInt();
+        return;
+    }
+    if (cmd == "GL") {
+        printLogs();
+        return;
+    }
+    if (cmd == "CL") {
+        clearLogs();
+        return;
+    }
+    String key = cmd.substring(0, 2);
+    String valStr = cmd.substring(2);
+    // Serial.println("key: " + key + " & val: " + String(valStr));
+    int val = valStr.toInt();
+    // Serial.println(val);
+    if (key == "LT") {
         light_threshold = val;
-        logEvent(CONFIG_CHANGE, light_threshold);
-    } else if (key == "AUTO_I") {
+        logEvent(LIGHT_TH, light_threshold);
+        return;
+    }
+    if (key == "MT") {
+        moisture_threshold = val;
+        logEvent(MOIST_TH, moisture_threshold);
+        return;
+    }
+    if (key == "AI") {
         auto_irrigation = (val == 1);
-        logEvent(CONFIG_CHANGE, auto_irrigation ? 1 : 0);
-    } else if (key == "AUTO_L") {
+        return;
+    }
+    if (key == "AL") {
         auto_light = (val == 1);
-        logEvent(CONFIG_CHANGE, auto_light ? 1 : 0);
-    } else if (key == "MAN_I") {
+        return;
+    }
+    if (key == "MI") {
         bool on = (val == 1);
         setIrrigationPins(on);
-        logEvent(on ? MANUAL_IRRIGATION_START : MANUAL_IRRIGATION_STOP, val);
-    } else if (key == "MAN_L") {
+        logEvent(MAN_IRRIGATION, val);
+        return;
+    }
+    if (key == "ML") {
         int brightness = constrain(val, 0, 255);
         setLightPins(brightness);
-        logEvent(MANUAL_LIGHT, brightness);
-    } else if (key == "GET_LOGS") {
-        if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-            printLogs();
-            xSemaphoreGive(serialMutex);
-        }
-    } else if (key == "CLEAR_LOGS") {
-        clearLogs();
-    } else {
-        unknownCommand(key + ":" + String(val));
+        logEvent(MAN_LIGHT, brightness);
+        return;
     }
+    unknownCommand("key: " + key + "& val: " + String(val));
 }
 
 void setIrrigationPins(bool state) {
@@ -215,10 +233,10 @@ void readSensorsTask(void *pvParameters) {
         }
 
         if (moisture < moisture_threshold) {
-            logEvent(MOISTURE_ALERT, moisture);
+            logEvent(LOW_MOISTURE, moisture);
         }
         if (light < light_threshold) {
-            logEvent(LIGHT_ALERT, light);
+            logEvent(LOW_LIGHT, light);
         }
         vTaskDelay(pdMS_TO_TICKS(1500));
     }
@@ -239,24 +257,23 @@ void autoControlTask(void *pvParameters) {
             bool isOn = digitalRead(irrigationPins[0]) == HIGH;
             if (localM > moisture_threshold && !isOn) {
                 setIrrigationPins(true);
-                logEvent(AUTO_IRRIGATION_START, localM);
+                logEvent(AUTO_IRRIGATION, 1);
             } else if (localM <= moisture_threshold && isOn) {
                 setIrrigationPins(false);
-                logEvent(AUTO_IRRIGATION_STOP, localM);
+                logEvent(AUTO_IRRIGATION, 0);
             }
         }
 
         // Auto light adjustment
         if (auto_light) {
-            int brightness =
-            map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
+            int brightness = map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
             brightness = constrain(brightness, 0, 255);
             setLightPins(brightness);
             if (localL < light_threshold) {
                 logEvent(AUTO_LIGHT, brightness);
             }
         }
-        
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -266,56 +283,24 @@ void serialComTask(void *pvParameters) {
         if (Serial.available()) {
             String cmd = Serial.readStringUntil('\n');
             cmd.trim();  // Remove leading/trailing whitespace
+
             Serial.print(F("Received command: "));  // Debugging
             Serial.println(cmd);
 
-            // Debug raw command bytes
-            Serial.print(F("Raw command bytes: "));
-            for (size_t i = 0; i < cmd.length(); i++) {
-                Serial.print((int)cmd[i]);
-                Serial.print(" ");
-            }
-            Serial.println();
-
-            int colon = cmd.indexOf(':');
-            if (colon != -1) {
-                Serial.println(colon);
-                String key = cmd.substring(0, colon);
-                Serial.println(key);
-                key.trim();  // Remove any extra spaces
-                Serial.println(key);
-                String valStr = cmd.substring(colon + 1);
-                valStr.trim();  // Remove any extra spaces
-
-                // Ensure valStr contains only numeric characters
-                for (int i = 0; i < valStr.length(); i++) {
-                    if (!isDigit(valStr[i])) {
-                        Serial.println(
-                            F("Error: Non-numeric value in command"));
-                        return;
-                    }
-                }
-
-                int val = valStr.toInt();
-                Serial.print(F("Parsed key: "));  // Debugging
-                Serial.println(key);
-                Serial.print(F("Parsed value: "));  // Debugging
-                Serial.println(val);
-                handleCommand(key, val);
-            } else {
-                unknownCommand(cmd);
-            }
+            if (cmd.length() > 1)
+                handleCommand(cmd);
+            else
+                continue;
         }
         vTaskDelay(pdMS_TO_TICKS(400));
     }
 }
-
 
 // Update time task to handle NTP updates
 void updateTimeTask(void *pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
     while (1) {
         current_time++;  // Increment even if no NTP updates
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10000));
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));
     }
 }

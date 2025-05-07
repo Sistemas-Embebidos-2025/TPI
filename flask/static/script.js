@@ -6,15 +6,13 @@ const clearLogsButton = document.getElementById('clearLogsButton');
 
 // Map Arduino EventType enum values to readable strings
 const eventTypeMap = {
-	0: "Auto Irrigation Start",
-	1: "Auto Irrigation Stop",
-	2: "Manual Irrigation Start",
-	3: "Manual Irrigation Stop",
-	4: "Auto Light",
-	5: "Manual Light",
-	6: "Moisture Alert",
-	7: "Light Alert",
-	8: "Config Change"
+	0: "Auto Irrigation",
+	1: "Manual Irrigation",
+	2: "Auto Light",
+	3: "Manual Light",
+	4: "Moisture Alert",
+	5: "Light Alert",
+	6: "Config Change"
 };
 
 let moistureChart, lightChart;
@@ -87,63 +85,57 @@ $('#autoIrrigationToggle').change(function () {
 	const state = $(this).prop('checked');
 	$('#irrigationModeStatus').text(state ? 'Auto' : 'Manual');
 	$('#irrigationControls').toggleClass('active', !state);
-	socket.emit('toggle_auto_control', {
-		key: 'AUTO_I',
-		state: state
-	});
+	socket.emit('toggle_auto_control', {key: 'AI', state: state});
+	console.log("Auto Irrigation Toggle:", state);
 });
 
 $('#autoLightToggle').change(function () {
 	const state = $(this).prop('checked');
 	$('#lightModeStatus').text(state ? 'Auto' : 'Manual');
 	$('#lightControls').toggleClass('active', !state);
-	socket.emit('toggle_auto_control', {
-		key: 'AUTO_L',
-		state: state
-	});
+	socket.emit('toggle_auto_control', {key: 'AL', state: state});
+	console.log("Auto Light Toggle:", state);
 });
 
 // Manual Irrigation Control
+// TODO: Get current state (irrigation on/off) from server
 $('#manualIrrigationToggle').click(() => {
 	const currentState = $('#irrigationState').text() === 'ON';
 	const newState = !currentState;
 	$('#irrigationState').text(newState ? 'ON' : 'OFF');
-	socket.emit('manual_control', {
-		key: 'MAN_I',
-		state: newState
-	});
+	socket.emit('manual_control', {key: 'MI', state: newState});
+	console.log("Manual Irrigation Toggle:", newState);
 });
 
 // Manual Light Control
 $('#manualLightSlider').on('input', function () {
 	const brightness = $(this).val();
 	$('#manualLightValue').text(brightness);
-	socket.emit('manual_control', {
-		key: 'MAN_L',
-		state: brightness
-	});
+	socket.emit('manual_control', {key: 'ML', state: brightness});
+	console.log("Manual Light Control:", brightness);
 });
 
 // Threshold Controls
 $('.threshold-input').on('input', function () {
-    const key = $(this).data('type'); // M_THRESH or L_THRESH
-    const value = $(this).val();
-    $(`#${key}Value`).text(value);
-    // Use the command key expected by Arduino
-    const commandKey = `${key}`;
-    socket.emit('threshold_update', { key: commandKey, value });
+	const key = $(this).data('type'); // MT or LT
+	const value = $(this).val();
+	$(`#${key}Value`).text(value);
+	// Use the command key expected by Arduino
+	const commandKey = `${key}`;
+	socket.emit('threshold_update', {key: commandKey, value});
+	console.log(`Threshold Update: ${key} = ${value}`);
 });
 
 // Add these functions for updating and sending threshold values
 function updateThresholdDisplay(slider, displayId) {
-    document.getElementById(displayId).textContent = slider.value;
+	document.getElementById(displayId).textContent = slider.value;
 }
 
 function sendThresholdUpdate(slider) {
-    const type = slider.getAttribute('data-type');
-    const value = slider.value;
-    socket.emit('threshold_update', { key: type, value: value });
-    console.log(`Sent threshold update: ${type} = ${value}`);
+	const type = slider.getAttribute('data-type');
+	const value = slider.value;
+	socket.emit('threshold_update', {key: type, value: value});
+	console.log(`Sent threshold update: ${type} = ${value}`);
 }
 
 // Event Listener for Get Logs Button
@@ -151,7 +143,7 @@ if (getLogsButton) { // Check if button exists
 	getLogsButton.addEventListener('click', () => {
 		console.log("Requesting logs..."); // Log action
 		if (logStatus) logStatus.textContent = 'Requesting logs...'; // Update status
-		socket.emit('get_logs_request'); // Emit event to backend
+		socket.emit('logs_request'); // Emit event to backend
 		// Clear the table while waiting for new logs
 		if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
 	});
@@ -195,18 +187,18 @@ socket.on('log_data', function (data) { // Listen for logs from backend
 });
 
 if (clearLogsButton) { // Check if button exists
-    clearLogsButton.addEventListener('click', () => {
-        console.log("Clearing logs..."); // Log action
-        if (logStatus) logStatus.textContent = 'Clearing logs...'; // Update status
-        socket.emit('clear_logs_request'); // Emit event to backend
-    });
+	clearLogsButton.addEventListener('click', () => {
+		console.log("Clearing logs..."); // Log action
+		if (logStatus) logStatus.textContent = 'Clearing logs...'; // Update status
+		socket.emit('clear_logs_request'); // Emit event to backend
+	});
 }
 
 // SocketIO Listener for Clear Logs Response
 socket.on('clear_logs_response', function (data) {
-    console.log("Clear logs response:", data.message); // Log response
-    if (logStatus) logStatus.textContent = data.message; // Update status
-    if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
+	console.log("Clear logs response:", data.message); // Log response
+	if (logStatus) logStatus.textContent = data.message; // Update status
+	if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
 });
 
 // SocketIO Listener for Potential Errors
@@ -217,4 +209,3 @@ socket.on('log_error', function (data) { // Listen for errors from backend
 
 // Initialize charts when page loads
 $(document).ready(initCharts);
-

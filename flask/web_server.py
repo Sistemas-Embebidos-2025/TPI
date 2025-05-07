@@ -13,7 +13,7 @@ socketio = SocketIO(app)
 # Ensure you use the correct COM port for your system
 try:
     # ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1) # Linux
-    ser = serial.Serial('COM3', 115200, timeout=5)  # Opens the serial port COMX (WINDOWS)
+    ser = serial.Serial('COM4', 115200, timeout=5)  # Opens the serial port COMX (WINDOWS)
 except serial.SerialException as port_error:
     print(f"Error opening serial port: {port_error}")
     ser = None  # Set ser to None if port cannot be opened
@@ -49,10 +49,10 @@ def sync_time_internal():
         return False  # Indicate failure
     try:
         current_time = int(get_ntp_time())
-        command = f"TIME:{current_time}\n"
+        command = f"T{current_time}\n"
         with lock:
             ser.write(command.encode())
-        print(f"Time sync command sent: TIME:{current_time} | {datetime.fromtimestamp(current_time)}")
+        print(f"Time sync command sent: T{current_time} | {datetime.fromtimestamp(current_time)}")
         time.sleep(0.5)
         return True  # Indicate success
     except ntplib.NTPException as e:
@@ -96,8 +96,8 @@ def serial_reader():
                 line = line_bytes.decode(errors='ignore').strip()
             elif reading_logs:
                 # If reading logs and no data comes within timeout, assume Arduino stopped
-                # This is a fallback in case END_LOG is missed
-                print("Timeout waiting for log data or END_LOG. Sending collected logs.")
+                # This is a fallback in case EL is missed
+                print("Timeout waiting for log data or EL. Sending collected logs.")
                 socketio.emit('log_data', {'logs': current_logs})
                 reading_logs = False
                 current_logs = []
@@ -129,8 +129,8 @@ def serial_reader():
 
         # Process the received line
         if reading_logs:
-            if line == "END_LOG":
-                print("Detected END_LOG marker.")
+            if line == "EL":
+                print("Detected EL marker.")
                 socketio.emit('log_data', {'logs': current_logs})  # Send collected logs
                 reading_logs = False  # Stop reading logs
                 current_logs = []  # Clear the buffer
@@ -146,7 +146,7 @@ def serial_reader():
                         'value': int(value)
                     })
                 else:
-                    # Received unexpected line while waiting for logs or END_LOG
+                    # Received unexpected line while waiting for logs or EL
                     print(f"Warning: Received unexpected line while reading logs: '{line}'")
         else:
             if line == "TS,TYPE,VALUE":  # Check for log header
@@ -195,20 +195,23 @@ def threshold_update(data):
     key = data.get('key')
     value = data.get('value')
     print(f"Received threshold update: {key} = {value}")  # Debug print
-    if key not in ['M_THRESH', 'L_THRESH']:
+    if key not in ['MT', 'LT']:
         print(f"Invalid key for threshold update: {key}")
+        socketio.emit('log_error', {'message': f'Invalid threshold update: {key}'})
         return
 
     try:
-        val_int = int(value)  # Check if value is integer
-        command = f"{key}:{val_int}\n"  # Construct command like "M_THRESH:500\n"
+        val_int = max(min(int(value), 1023), 0)  # Ensure value is between 0 and 1023
+        command = f"{key}{val_int}\n"  # Construct command like "MT500\n"
         with lock:
             ser.write(command.encode())
         print(f"Sent command: {command.strip()}")
     except ValueError:
         print(f"Invalid value for threshold update: {value}")
+        socketio.emit('log_error', {'message': f'Invalid value for threshold update: {value}'})
     except Exception as e:
         print(f"Error sending threshold update: {e}")
+        socketio.emit('log_error', {'message': f'Error sending threshold update: {e}'})
 
 
 @socketio.on("toggle_auto_control")
@@ -217,11 +220,12 @@ def toggle_auto_control(data):
     key = data.get('key')
     state = data.get('state')
     print(f"Received toggle auto control: {key} = {state}")  # Debug print
-    if key not in ['AUTO_I', 'AUTO_L']:
+    if key not in ['AI', 'AL']:
         print(f"Invalid key for toggle auto control: {key}")
+        socketio.emit('log_error', {'message': f'Invalid toggle auto control: {key}'})
         return
 
-    command = f"{key}:{1 if state else 0}\n"
+    command = f"{key}{1 if state else 0}\n"
     with lock:
         ser.write(command.encode())
     print(f"Sent command: {command.strip()}")
@@ -233,19 +237,21 @@ def manual_control(data):
     key = data.get('key')
     state = data.get('state')
     print(f"Received manual control: {key} = {state}")  # Debug print
-    if key not in ['MAN_I', 'MAN_L']:
+    if key not in ['MI', 'ML']:
         print(f"Invalid key for manual control: {key}")
+        socketio.emit('log_error', {'message': f'Invalid manual control: {key}'})
         return
 
     command = ""
-    if key == 'MAN_I':
-        command = f"MAN_I:{1 if state else 0}\n"
-    elif key == 'MAN_L':
+    if key == 'MI':
+        command = f"MI{1 if state else 0}\n"
+    elif key == 'ML':
         try:
             brightness = min(max(int(state), 0), 255)  # Ensure brightness is between 0 and 255
-            command = f"MAN_L:{brightness}\n"
+            command = f"ML{brightness}\n"
         except ValueError:
             print(f"Invalid value for manual light: {state}")
+            socketio.emit('log_error', {'message': f'Invalid value for manual light: {state}'})
             return
 
     if command:
@@ -254,7 +260,7 @@ def manual_control(data):
         print(f"Sent command: {command.strip()}")
 
 
-@socketio.on("get_logs_request")
+@socketio.on("logs_request")
 def handle_log_request():
     """
     Handles request from frontend to fetch logs.
@@ -265,14 +271,14 @@ def handle_log_request():
         return
 
     print("Received log request from client.")
-    command = "GET_LOGS:0\n"
+    command = "GL\n"
     try:
         with lock:
             ser.write(command.encode())  # Send command to Arduino
         print(f"Sent command: {command.strip()}")
         socketio.emit('log_request_sent', {'message': 'Log request sent to Arduino.'})
     except Exception as e:
-        print(f"Error sending GET_LOGS command: {e}")
+        print(f"Error sending GL command: {e}")
         socketio.emit('log_error', {'message': f'Error sending command to Arduino: {e}'})
 
 @socketio.on("clear_logs_request")
@@ -286,14 +292,14 @@ def handle_clear_logs_request():
         return
 
     print("Received clear logs request from client.")
-    command = "CLEAR_LOGS:0\n"  # Command to clear logs on Arduino
+    command = "CL\n"  # Command to clear logs on Arduino
     try:
         with lock:
             ser.write(command.encode())  # Send command to Arduino
         print(f"Sent command: {command.strip()}")
         socketio.emit('clear_logs_response', {'message': 'Logs cleared successfully.'})
     except Exception as e:
-        print(f"Error sending CLEAR_LOGS command: {e}")
+        print(f"Error sending CL command: {e}")
         socketio.emit('clear_logs_response', {'message': f'Error clearing logs: {e}'})
 
 
@@ -312,4 +318,4 @@ if __name__ == '__main__':
 
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)  # allow_unsafe_werkzeug for development auto-reload
 
-# TODO: When light threshold is set to 0 the light should be turned off
+# TODO: Why only 147 logs are sent?
