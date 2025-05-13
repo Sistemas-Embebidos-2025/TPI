@@ -32,15 +32,13 @@ enum EventType {
     MAN_IRRIG,   // 1
     AUTO_LIGHT,  // 2
     MAN_LIGHT,   // 3
-    // LOW_MOISTURE,     // 4
-    // LOW_LIGHT,        // 5
-    LIGHT_TH,  // 6
-    MOIST_TH,  // 7
-    MOISTURE,  // 8
-    LIGHT      // 9
+    LIGHT_TH,    // 4
+    MOIST_TH,    // 5
+    MOISTURE,    // 6
+    LIGHT        // 7
 };
 
-const int logSensorPeriod = 30;  // seconds
+const int logSensorPeriod = 60;  // seconds
 
 SemaphoreHandle_t eepromMutex;
 SemaphoreHandle_t serialMutex;
@@ -109,7 +107,8 @@ void logEvent(uint8_t type, uint16_t value) {
 
 int findNextEEPROMAddress() {
     Event event;
-    for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
+    for (int addr = 0; (unsigned int)addr < EEPROM.length();
+         addr += RECORD_SIZE) {
         EEPROM.get(addr, event);
         if (event.timestamp == 0xFFFFFFFF) return addr;
     }
@@ -121,7 +120,8 @@ void printLogs() {
     Event e;
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
         Serial.println(F("TS,T,V"));  // header row
-        for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
+        for (int addr = 0; (unsigned int)addr < EEPROM.length();
+             addr += RECORD_SIZE) {
             EEPROM.get(addr, e);
             // We use timestamp==0xFFFFFFFF to mark “empty” slots
             if (e.timestamp == 0xFFFFFFFFUL || e.timestamp == 0) break;
@@ -141,7 +141,8 @@ void printLogs() {
 // Clear all logs from EEPROM
 void clearLogs() {
     if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
-        for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
+        for (int addr = 0; (unsigned int)addr < EEPROM.length();
+             addr += RECORD_SIZE) {
             Event emptyEvent = {0xFFFFFFFF, 0, 0};
             EEPROM.put(addr, emptyEvent);
         }
@@ -247,7 +248,7 @@ void readSensorsTask(void *pvParameters) {
         if (current_time - lastPeriodicLog >= logSensorPeriod) {
             logEvent(MOISTURE, localM);
             logEvent(LIGHT, localL);
-            lastPeriodicLog = current_time; // Update last log time
+            lastPeriodicLog = current_time;  // Update last log time
         }
 
         vTaskDelay(sensorDelay);
@@ -255,6 +256,8 @@ void readSensorsTask(void *pvParameters) {
 }
 
 void autoControlTask(void *pvParameters) {
+    static bool wasLightLow = false;
+
     while (1) {
         uint16_t localM, localL;
 
@@ -278,12 +281,14 @@ void autoControlTask(void *pvParameters) {
 
         // Auto light adjustment
         if (auto_light) {
-            int brightness =
-                map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
+            int brightness = map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
             brightness = constrain(brightness, 0, 255);
             setLightPins(brightness);
-            if (localL < light_threshold) {
-                logEvent(AUTO_LIGHT, 1);
+
+            bool isLightLow = (localL < light_threshold);
+            if (isLightLow != wasLightLow) {
+                logEvent(AUTO_LIGHT, isLightLow ? 1 : 0);
+                wasLightLow = isLightLow; // Update state tracker
             }
         }
 

@@ -10,9 +10,10 @@ const eventTypeMap = {
 	1: "Manual Irrigation",
 	2: "Auto Light",
 	3: "Manual Light",
-	4: "Moisture Alert",
-	5: "Light Alert",
-	6: "Config Change"
+	4: "Light Threshold Change",
+	5: "Moisture Threshold Change",
+	6: "Moisture Measurement",
+	7: "Light Measurement",
 };
 
 let moistureChart, lightChart;
