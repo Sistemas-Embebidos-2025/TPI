@@ -4,17 +4,13 @@
 #include <semphr.h>
 #include <task.h>
 
-// TODO: Prevent logging same event multiple times (LOW_MOISTURE)
-
 // Pin Definitions
 #define MOISTURE_SENSOR A2
 #define LIGHT_SENSOR A3
 
-// Irrigation on pins 6 & 7
 const int irrigationPins[] = {6};
 const int numIrrigation = sizeof(irrigationPins) / sizeof(irrigationPins[0]);
 
-// Lighting (PWM) on pins 9, 10, 11, 12
 const int lightPins[] = {8, 9, 10, 11, 12};
 const int numLights = sizeof(lightPins) / sizeof(lightPins[0]);
 
@@ -28,14 +24,16 @@ const int RECORD_SIZE = sizeof(Event);
 int nextLogAddress = 0;
 
 enum EventType {
-    AUTO_IRRIG,  // 0
-    MAN_IRRIG,   // 1
-    AUTO_LIGHT,  // 2
-    MAN_LIGHT,   // 3
-    LIGHT_TH,    // 4
-    MOIST_TH,    // 5
-    MOISTURE,    // 6
-    LIGHT        // 7
+    AUTO_IRRIG,  // 0 Irrigation state change due to auto mode
+    MAN_IRRIG,   // 1 Irrigation state change due to manual command
+    AUTO_LIGHT,  // 2 Light state change due to auto mode (on/off threshold)
+    MAN_LIGHT,   // 3 Light state change due to manual command (brightness)
+    LIGHT_TH,    // 4 Light threshold changed
+    MOIST_TH,    // 5 Moisture threshold changed
+    MOISTURE,    // 6 Periodic moisture sensor reading
+    LIGHT,       // 7 Periodic light sensor reading
+    AUTO_IRRIG_MODE,  // 8 Current auto irrigation mode (1 for on, 0 for off)
+    AUTO_LIGHT_MODE,  // 9 Current auto light mode (1 for on, 0 for off)
 };
 
 const int logSensorPeriod = 60;  // seconds
@@ -45,60 +43,22 @@ SemaphoreHandle_t serialMutex;
 SemaphoreHandle_t sensorMutex;
 
 // Thresholds and State
-bool auto_irrigation = true;
-bool auto_light = true;
+bool autoIrrigation = true;
+bool autoLight = true;
 uint16_t moisture_threshold = 500;
 uint16_t light_threshold = 500;
 uint16_t moisture, light;
-volatile uint32_t current_time = 0;
+uint8_t globalBrightness = 0;
+volatile uint32_t currentTime = 0;
 
 const int sensorDelay = pdMS_TO_TICKS(1500);
 const int ctrlDelay = pdMS_TO_TICKS(1000);
 const int serialDelay = pdMS_TO_TICKS(500);
 const int oneSecond = pdMS_TO_TICKS(1000);
 
-// RTOS Tasks
-void readSensorsTask(void *pvParameters);
-void autoControlTask(void *pvParameters);
-void serialComTask(void *pvParameters);
-void updateTimeTask(void *pvParameters);
-
-int findNextEEPROMAddress();
-
-void setup() {
-    Serial.begin(115200);
-    EEPROM.begin();
-
-    // Init irrigation pins
-    for (int i = 0; i < numIrrigation; i++) {
-        pinMode(irrigationPins[i], OUTPUT);
-        digitalWrite(irrigationPins[i], LOW);
-    }
-
-    // Init light pins
-    for (int i = 0; i < numLights; i++) {
-        pinMode(lightPins[i], OUTPUT);
-        analogWrite(lightPins[i], 0);  // off
-    }
-
-    eepromMutex = xSemaphoreCreateMutex();
-    serialMutex = xSemaphoreCreateMutex();
-    sensorMutex = xSemaphoreCreateMutex();
-    nextLogAddress = findNextEEPROMAddress();
-
-    xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 1, NULL);
-    xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 1, NULL);
-    xTaskCreate(serialComTask, "Serial", 256, NULL, 1, NULL);
-    xTaskCreate(updateTimeTask, "Time", 128, NULL, 1, NULL);
-
-    vTaskStartScheduler();
-}
-
-void loop() {}
-
 void logEvent(uint8_t type, uint16_t value) {
     if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
-        Event newEvent = {current_time, type, value};
+        Event newEvent = {currentTime, type, value};
         EEPROM.put(nextLogAddress, newEvent);
         nextLogAddress = (nextLogAddress + RECORD_SIZE) % EEPROM.length();
         xSemaphoreGive(eepromMutex);
@@ -138,6 +98,40 @@ void printLogs() {
     }
 }
 
+void logCurrentSystemState() {
+    uint16_t currentM, currentL;
+
+    if (xSemaphoreTake(sensorMutex, portMAX_DELAY) == pdTRUE) {
+        currentM = moisture;
+        currentL = light;
+        xSemaphoreGive(sensorMutex);
+    }
+    logEvent(MOISTURE, currentM);  // Log current moisture
+    logEvent(LIGHT, currentL);     // Log current light
+
+    // Log current thresholds
+    logEvent(MOIST_TH, moisture_threshold);
+    logEvent(LIGHT_TH, light_threshold);
+
+    // Log current operational modes
+    logEvent(AUTO_IRRIG_MODE, autoIrrigation ? 1 : 0);
+    logEvent(AUTO_LIGHT_MODE, autoLight ? 1 : 0);
+
+    // Log current irrigation pin state
+    bool isIrrigationOn = digitalRead(irrigationPins[0]) == HIGH;
+    if (autoIrrigation) {
+        logEvent(AUTO_IRRIG, isIrrigationOn ? 1 : 0);
+    } else {
+        logEvent(MAN_IRRIG, isIrrigationOn ? 1 : 0);
+    }
+
+    if (autoLight) {
+        logEvent(AUTO_LIGHT, globalBrightness);
+    } else {
+        logEvent(MAN_LIGHT, globalBrightness);
+    }
+}
+
 // Clear all logs from EEPROM
 void clearLogs() {
     if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
@@ -147,7 +141,13 @@ void clearLogs() {
             EEPROM.put(addr, emptyEvent);
         }
         nextLogAddress = 0;
+        // Print current system state after clearing logs
+        // logCurrentSystemState();
         xSemaphoreGive(eepromMutex);
+    }
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.println(F("Logs cleared"));
+        xSemaphoreGive(serialMutex);
     }
 }
 
@@ -158,6 +158,7 @@ void setIrrigationPins(bool state) {
 }
 
 void setLightPins(int brightness) {
+    globalBrightness = brightness;
     for (int i = 0; i < numLights; i++) {
         analogWrite(lightPins[i], brightness);
     }
@@ -172,9 +173,10 @@ void unknownCommand(const String &cmd) {
 }
 
 void handleCommand(const String &cmd) {
+    Serial.print(F("CMD:"));
+    Serial.println(cmd);
     if (cmd[0] == 'T') {
-        current_time = cmd.substring(1).toInt();
-        // Serial.println(current_time);
+        currentTime = cmd.substring(1).toInt();
         return;
     }
     if (cmd == "GL") {
@@ -187,9 +189,7 @@ void handleCommand(const String &cmd) {
     }
     String key = cmd.substring(0, 2);
     String valStr = cmd.substring(2);
-    // Serial.println("k " + key + " v " + String(valStr));
     int val = valStr.toInt();
-    // Serial.println(val);
     if (key == "LT") {
         light_threshold = constrain(val, 1, 1023);
         logEvent(LIGHT_TH, light_threshold);
@@ -201,11 +201,13 @@ void handleCommand(const String &cmd) {
         return;
     }
     if (key == "AI") {
-        auto_irrigation = (val == 1);
+        autoIrrigation = (val == 1);
+        logEvent(AUTO_IRRIG_MODE, autoIrrigation ? 1 : 0);
         return;
     }
     if (key == "AL") {
-        auto_light = (val == 1);
+        autoLight = (val == 1);
+        logEvent(AUTO_LIGHT_MODE, autoLight ? 1 : 0);
         return;
     }
     if (key == "MI") {
@@ -221,6 +223,8 @@ void handleCommand(const String &cmd) {
     }
     unknownCommand(cmd);
 }
+
+// TASKS ---------------------------------------------------------------------------------------------------------------
 
 void readSensorsTask(void *pvParameters) {
     static uint32_t lastPeriodicLog = 0;
@@ -245,10 +249,10 @@ void readSensorsTask(void *pvParameters) {
         }
 
         // Log periodic sensor values every 30 seconds
-        if (current_time - lastPeriodicLog >= logSensorPeriod) {
+        if (currentTime - lastPeriodicLog >= logSensorPeriod) {
             logEvent(MOISTURE, localM);
             logEvent(LIGHT, localL);
-            lastPeriodicLog = current_time;  // Update last log time
+            lastPeriodicLog = currentTime;  // Update last log time
         }
 
         vTaskDelay(sensorDelay);
@@ -268,7 +272,7 @@ void autoControlTask(void *pvParameters) {
         }
 
         // Auto irrigation control
-        if (auto_irrigation) {
+        if (autoIrrigation) {
             bool isOn = digitalRead(irrigationPins[0]) == HIGH;
             if (localM > moisture_threshold && !isOn) {
                 setIrrigationPins(true);
@@ -280,15 +284,14 @@ void autoControlTask(void *pvParameters) {
         }
 
         // Auto light adjustment
-        if (auto_light) {
+        if (autoLight) {
             int brightness = map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
-            brightness = constrain(brightness, 0, 255);
-            setLightPins(brightness);
+            setLightPins(constrain(brightness, 0, 255));
 
             bool isLightLow = (localL < light_threshold);
             if (isLightLow != wasLightLow) {
                 logEvent(AUTO_LIGHT, isLightLow ? 1 : 0);
-                wasLightLow = isLightLow; // Update state tracker
+                wasLightLow = isLightLow;  // Update state tracker
             }
         }
 
@@ -301,10 +304,6 @@ void serialComTask(void *pvParameters) {
         if (Serial.available()) {
             String cmd = Serial.readStringUntil('\n');
             cmd.trim();  // Remove leading/trailing whitespace
-
-            // Serial.print(F("CMD:"));  // Debugging
-            // Serial.println(cmd);
-
             if (cmd.length() > 1)
                 handleCommand(cmd);
             else
@@ -318,7 +317,39 @@ void serialComTask(void *pvParameters) {
 void updateTimeTask(void *pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
     while (1) {
-        current_time++;  // Increment even if no NTP updates
+        currentTime++;  // Increment even if no NTP updates
         vTaskDelayUntil(&lastWakeTime, oneSecond);
     }
 }
+
+// SETUP & LOOP --------------------------------------------------------------------------------------------------------
+
+void setup() {
+    Serial.begin(115200);
+    EEPROM.begin();
+
+    // Init irrigation and light pins
+    for (int i = 0; i < numIrrigation; i++) {
+        pinMode(irrigationPins[i], OUTPUT);
+        digitalWrite(irrigationPins[i], LOW);
+    }
+
+    for (int i = 0; i < numLights; i++) {
+        pinMode(lightPins[i], OUTPUT);
+        analogWrite(lightPins[i], 0);  // off
+    }
+
+    eepromMutex = xSemaphoreCreateMutex();
+    serialMutex = xSemaphoreCreateMutex();
+    sensorMutex = xSemaphoreCreateMutex();
+    nextLogAddress = findNextEEPROMAddress();
+
+    xTaskCreate(readSensorsTask, "Sensors", 256, NULL, 1, NULL);
+    xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 1, NULL);
+    xTaskCreate(serialComTask, "Serial", 256, NULL, 2, NULL);
+    xTaskCreate(updateTimeTask, "Time", 64, NULL, 1, NULL);
+
+    vTaskStartScheduler();
+}
+
+void loop() {}
