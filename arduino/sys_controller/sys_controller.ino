@@ -28,15 +28,19 @@ const int RECORD_SIZE = sizeof(Event);
 int nextLogAddress = 0;
 
 enum EventType {
-    AUTO_IRRIGATION,  // 0
-    MAN_IRRIGATION,   // 1
-    AUTO_LIGHT,       // 2
-    MAN_LIGHT,        // 3
-    LOW_MOISTURE,     // 4
-    LOW_LIGHT,        // 5
-    LIGHT_TH,         // 6
-    MOIST_TH          // 7
+    AUTO_IRRIG,  // 0
+    MAN_IRRIG,   // 1
+    AUTO_LIGHT,  // 2
+    MAN_LIGHT,   // 3
+    // LOW_MOISTURE,     // 4
+    // LOW_LIGHT,        // 5
+    LIGHT_TH,  // 6
+    MOIST_TH,  // 7
+    MOISTURE,  // 8
+    LIGHT      // 9
 };
+
+const int logSensorPeriod = 30;  // seconds
 
 SemaphoreHandle_t eepromMutex;
 SemaphoreHandle_t serialMutex;
@@ -50,12 +54,17 @@ uint16_t light_threshold = 500;
 uint16_t moisture, light;
 volatile uint32_t current_time = 0;
 
+const int sensorDelay = pdMS_TO_TICKS(1500);
+const int ctrlDelay = pdMS_TO_TICKS(1000);
+const int serialDelay = pdMS_TO_TICKS(500);
+const int oneSecond = pdMS_TO_TICKS(1000);
+
 // RTOS Tasks
 void readSensorsTask(void *pvParameters);
 void autoControlTask(void *pvParameters);
 void serialComTask(void *pvParameters);
 void updateTimeTask(void *pvParameters);
-void logEvent(uint8_t type, uint16_t value);
+
 int findNextEEPROMAddress();
 
 void setup() {
@@ -100,7 +109,7 @@ void logEvent(uint8_t type, uint16_t value) {
 
 int findNextEEPROMAddress() {
     Event event;
-    for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+    for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
         EEPROM.get(addr, event);
         if (event.timestamp == 0xFFFFFFFF) return addr;
     }
@@ -112,7 +121,7 @@ void printLogs() {
     Event e;
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
         Serial.println(F("TS,T,V"));  // header row
-        for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+        for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
             EEPROM.get(addr, e);
             // We use timestamp==0xFFFFFFFF to mark “empty” slots
             if (e.timestamp == 0xFFFFFFFFUL || e.timestamp == 0) break;
@@ -132,65 +141,13 @@ void printLogs() {
 // Clear all logs from EEPROM
 void clearLogs() {
     if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
-        for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
+        for (int addr = 0; (unsigned int) addr < EEPROM.length(); addr += RECORD_SIZE) {
             Event emptyEvent = {0xFFFFFFFF, 0, 0};
             EEPROM.put(addr, emptyEvent);
         }
         nextLogAddress = 0;
         xSemaphoreGive(eepromMutex);
     }
-}
-
-void handleCommand(const String &cmd) {
-    if (cmd[0] == 'T') {
-        current_time = cmd.substring(1).toInt();
-        Serial.println(current_time);
-        return;
-    }
-    if (cmd == "GL") {
-        printLogs();
-        return;
-    }
-    if (cmd == "CL") {
-        clearLogs();
-        return;
-    }
-    String key = cmd.substring(0, 2);
-    String valStr = cmd.substring(2);
-    // Serial.println("k " + key + " v " + String(valStr));
-    int val = valStr.toInt();
-    // Serial.println(val);
-    if (key == "LT") {
-        light_threshold = val;
-        logEvent(LIGHT_TH, light_threshold);
-        return;
-    }
-    if (key == "MT") {
-        moisture_threshold = val;
-        logEvent(MOIST_TH, moisture_threshold);
-        return;
-    }
-    if (key == "AI") {
-        auto_irrigation = (val == 1);
-        return;
-    }
-    if (key == "AL") {
-        auto_light = (val == 1);
-        return;
-    }
-    if (key == "MI") {
-        bool on = (val == 1);
-        setIrrigationPins(on);
-        logEvent(MAN_IRRIGATION, val);
-        return;
-    }
-    if (key == "ML") {
-        int brightness = constrain(val, 0, 255);
-        setLightPins(brightness);
-        logEvent(MAN_LIGHT, brightness);
-        return;
-    }
-    unknownCommand(cmd);
 }
 
 void setIrrigationPins(bool state) {
@@ -213,7 +170,60 @@ void unknownCommand(const String &cmd) {
     }
 }
 
+void handleCommand(const String &cmd) {
+    if (cmd[0] == 'T') {
+        current_time = cmd.substring(1).toInt();
+        // Serial.println(current_time);
+        return;
+    }
+    if (cmd == "GL") {
+        printLogs();
+        return;
+    }
+    if (cmd == "CL") {
+        clearLogs();
+        return;
+    }
+    String key = cmd.substring(0, 2);
+    String valStr = cmd.substring(2);
+    // Serial.println("k " + key + " v " + String(valStr));
+    int val = valStr.toInt();
+    // Serial.println(val);
+    if (key == "LT") {
+        light_threshold = constrain(val, 1, 1023);
+        logEvent(LIGHT_TH, light_threshold);
+        return;
+    }
+    if (key == "MT") {
+        moisture_threshold = constrain(val, 1, 1023);
+        logEvent(MOIST_TH, moisture_threshold);
+        return;
+    }
+    if (key == "AI") {
+        auto_irrigation = (val == 1);
+        return;
+    }
+    if (key == "AL") {
+        auto_light = (val == 1);
+        return;
+    }
+    if (key == "MI") {
+        setIrrigationPins(val == 1);
+        logEvent(MAN_IRRIG, val);
+        return;
+    }
+    if (key == "ML") {
+        int brightness = constrain(val, 0, 255);
+        setLightPins(brightness);
+        logEvent(MAN_LIGHT, brightness);
+        return;
+    }
+    unknownCommand(cmd);
+}
+
 void readSensorsTask(void *pvParameters) {
+    static uint32_t lastPeriodicLog = 0;
+
     while (1) {
         uint16_t localM = analogRead(MOISTURE_SENSOR);
         uint16_t localL = analogRead(LIGHT_SENSOR);
@@ -233,13 +243,14 @@ void readSensorsTask(void *pvParameters) {
             xSemaphoreGive(serialMutex);
         }
 
-        if (moisture < moisture_threshold) {
-            logEvent(LOW_MOISTURE, moisture);
+        // Log periodic sensor values every 30 seconds
+        if (current_time - lastPeriodicLog >= logSensorPeriod) {
+            logEvent(MOISTURE, localM);
+            logEvent(LIGHT, localL);
+            lastPeriodicLog = current_time; // Update last log time
         }
-        if (light < light_threshold) {
-            logEvent(LOW_LIGHT, light);
-        }
-        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        vTaskDelay(sensorDelay);
     }
 }
 
@@ -258,16 +269,17 @@ void autoControlTask(void *pvParameters) {
             bool isOn = digitalRead(irrigationPins[0]) == HIGH;
             if (localM > moisture_threshold && !isOn) {
                 setIrrigationPins(true);
-                logEvent(AUTO_IRRIGATION, 1);
+                logEvent(AUTO_IRRIG, 1);
             } else if (localM <= moisture_threshold && isOn) {
                 setIrrigationPins(false);
-                logEvent(AUTO_IRRIGATION, 0);
+                logEvent(AUTO_IRRIG, 0);
             }
         }
 
         // Auto light adjustment
         if (auto_light) {
-            int brightness = map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
+            int brightness =
+                map(localL, 0, light_threshold, 255, 0);  // Inverse mapping
             brightness = constrain(brightness, 0, 255);
             setLightPins(brightness);
             if (localL < light_threshold) {
@@ -275,7 +287,7 @@ void autoControlTask(void *pvParameters) {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(ctrlDelay);
     }
 }
 
@@ -293,7 +305,7 @@ void serialComTask(void *pvParameters) {
             else
                 continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(400));
+        vTaskDelay(serialDelay);
     }
 }
 
@@ -302,6 +314,6 @@ void updateTimeTask(void *pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
     while (1) {
         current_time++;  // Increment even if no NTP updates
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));
+        vTaskDelayUntil(&lastWakeTime, oneSecond);
     }
 }
