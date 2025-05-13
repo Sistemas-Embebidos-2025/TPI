@@ -5,7 +5,7 @@ from threading import Thread, Lock
 
 import ntplib
 import serial
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 
 app = Flask(__name__)
@@ -20,7 +20,6 @@ except serial.SerialException as port_error:
 
 lock = Lock()
 
-# Threshold defaults
 MOISTURE_THRESH = 500
 LIGHT_THRESH = 500
 
@@ -71,108 +70,153 @@ def sync_time():
         time.sleep(3600)  # Sync periodically (e.g., every hour)
 
 
+def request_initial_thresholds():
+    """Requests initial thresholds from Arduino."""
+    if not ser:
+        print("request_initial_thresholds: Serial port not available.")
+        return
+    try:
+        print("Requesting initial moisture threshold...")
+        with lock:
+            ser.write(b"X\n")
+        time.sleep(0.5)  # Give Arduino time to respond
+
+        print("Requesting initial light threshold...")
+        with lock:
+            ser.write(b"Z\n")
+        time.sleep(0.5)  # Give Arduino time to respond
+        print("Initial threshold requests sent.")
+    except Exception as e:
+        print(f"Error requesting initial thresholds: {e}")
+
+
 def serial_reader():
+    global MOISTURE_THRESH, LIGHT_THRESH
     reading_logs = False
     current_logs = []
-    log_pattern = re.compile(r"^(\d+),(\d+),(\d+)$")  # Regex for TS,TYPE,VALUE
+    log_pattern = re.compile(r"^(\d+),(\d+),(\d+)$")
+
+    # Regex for threshold values from Arduino
+    moisture_th_pattern = re.compile(r"^X(\d+)$")
+    light_th_pattern = re.compile(r"^Z(\d+)$")
+    sensor_data_pattern = re.compile(r"^m(\d+)l(\d+)$")
 
     while True:
-        # Add a check for reading_logs timeout as a fallback
         if reading_logs and (not ser or not ser.is_open):
             print("Serial port closed or error while reading logs. Sending partial logs.")
             if current_logs:
                 socketio.emit('log_data', {'logs': current_logs})
             current_logs, reading_logs = reset_logs()
-            time.sleep(10)  # Pause before trying again
+            time.sleep(1)
             continue
 
-        # Handle serial reading with timeout
         line = None
-
         try:
-            if ser and ser.in_waiting > 0:  # Check if data exists before reading
+            if ser and ser.in_waiting > 0:
                 line = ser.readline().decode(errors='ignore').strip()
             elif reading_logs:
-                # If reading logs and no data comes within timeout, assume Arduino stopped (fallback in case end logs is missed)
                 print("Timeout waiting for log data or E (End logs). Sending collected logs.")
-                socketio.emit('log_data', {'logs': current_logs})
+                if current_logs:  # Ensure current_logs is not empty
+                    socketio.emit('log_data', {'logs': current_logs})
                 current_logs, reading_logs = reset_logs()
-                time.sleep(10)  # Short sleep after timeout
+                time.sleep(1)
                 continue
-        except serial.SerialException as e:  # Handle serial errors during read
+        except serial.SerialException as e:
             print(f"Serial Exception during read: {e}")
             if reading_logs:
-                print("Aborting log read due to serial error.")
                 socketio.emit('log_error', {'message': f'Serial error during log read: {e}'})
                 current_logs, reading_logs = reset_logs()
-            time.sleep(10)
+            time.sleep(1)
             continue
         except UnicodeDecodeError:
-            print("Serial read warning: UnicodeDecodeError")  # Handle potential garbage data
+            print("Serial read warning: UnicodeDecodeError")
             socketio.emit('log_error', {'message': 'UnicodeDecodeError in serial read'})
-            line = None  # Ignore undecodable lines
+            line = None
         except Exception as e:
             print(f"Unexpected error in serial_reader loop: {e}")
-            if reading_logs:  # Reset state on unexpected errors
-                socketio.emit('log_error', {'message': f'Unexpected error in serial_reader loop: {e}'})
+            if reading_logs:
+                socketio.emit('log_error', {'message': f'Unexpected error: {e}'})
                 current_logs, reading_logs = reset_logs()
-            time.sleep(10)
-            continue  # Continue the loop
-
-        if line is None:  # If readline timed out or produced no data
-            time.sleep(10)  # Prevent busy-waiting if serial is idle
+            time.sleep(1)
             continue
 
-        # Process the received line
+        if line is None:
+            time.sleep(0.1)  # Prevent busy-waiting
+            continue
+
         if reading_logs:
             current_logs, reading_logs = read_logs(current_logs, line, log_pattern, reading_logs)
         else:
-            if line == "TS,T,V":  # Check for log header
-                print("Detected log header, starting log capture.")
-                reading_logs = True  # Start reading logs
-                current_logs = []  # Clear previous logs
-            elif line.startswith("m"):
-                data = {}
-                l_part = line.find('l')
-                if l_part == -1:
-                    print("Malformed sensor data received, ignoring.")
-                    socketio.emit('log_error', {'message': 'Malformed sensor data received'})
-                    continue
-                # Extract moisture and light values
-                moisture_str = line[1:l_part]
-                light_str = line[l_part + 1:]
-                try:
-                    data['M'] = int(moisture_str)
-                    data['L'] = int(light_str)
-                    socketio.emit('sensor_update', {
-                        'moisture': data.get('M', 0),
-                        'light': data.get('L', 0)
-                    })
-                except ValueError:
-                    print(f"Could not parse sensor values '{moisture_str}' or '{light_str}'")
-                    socketio.emit('log_error', {'message': f'Could not parse sensor values: {moisture_str}, {light_str}'})
-            elif line.startswith("U"):
-                # Handle unknown command from Arduino
-                print(f"Arduino error handling command: {line[1:]}")
-                socketio.emit('log_error', {'message': f'Arduino error handling command: {line[1:]}'})
-            else:
-                # Emit other non-log, non-sensor data if needed
-                if line:
-                    print(f"Received serial data: {line}")  # Debug print
+            current_logs, reading_logs = handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, reading_logs, sensor_data_pattern)
+
+
+def handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, reading_logs, sensor_data_pattern):
+    global MOISTURE_THRESH, LIGHT_THRESH
+    # Check for threshold responses
+    mt_match = moisture_th_pattern.match(line)
+    lt_match = light_th_pattern.match(line)
+    sensor_match = sensor_data_pattern.match(line)
+    if mt_match:
+        try:
+            MOISTURE_THRESH = int(mt_match.group(1))
+            print(f"Received initial moisture threshold: {MOISTURE_THRESH}")
+            socketio.emit('initial_threshold_update', {
+                'key': 'MT',
+                'value': MOISTURE_THRESH
+            })
+        except ValueError:
+            print(f"Could not parse moisture threshold value from: {line}")
+    elif lt_match:
+        try:
+            LIGHT_THRESH = int(lt_match.group(1))
+            print(f"Received initial light threshold: {LIGHT_THRESH}")
+            socketio.emit('initial_threshold_update', {
+                'key': 'LT',
+                'value': LIGHT_THRESH
+            })
+        except ValueError:
+            print(f"Could not parse light threshold value from: {line}")
+    elif line == "TS,T,V":
+        print("Detected log header, starting log capture.")
+        reading_logs = True
+        current_logs = []
+    elif sensor_match:  # Sensor data m{moisture}l{light}
+        data = {}
+        l_part = line.find('l')
+        if l_part != -1:
+            moisture_str = line[1:l_part]
+            light_str = line[l_part + 1:]
+            try:
+                data['M'] = int(moisture_str)
+                data['L'] = int(light_str)
+                socketio.emit('sensor_update', {
+                    'moisture': data.get('M', 0),
+                    'light': data.get('L', 0)
+                })
+            except ValueError:
+                print(f"Could not parse sensor values from: {line}")
+                socketio.emit('log_error', {'message': f'Could not parse sensor values: {line}'})
+        else:
+            print(f"Malformed sensor data line: {line}")
+            socketio.emit('log_error', {'message': f'Malformed sensor data: {line}'})
+    elif line.startswith("U"):
+        print(f"Arduino error handling command: {line[1:]}")
+        socketio.emit('log_error', {'message': f'Arduino error: {line[1:]}'})
+    else:
+        if line:  # Avoid printing empty lines if any
+            print(f"Received serial data: {line}")
+    return current_logs, reading_logs
 
 
 def read_logs(current_logs, line, log_pattern, reading_logs):
     if line == "E":
         print("Detected E (End logs) marker.")
-        socketio.emit('log_data', {'logs': current_logs})  # Send collected logs
+        socketio.emit('log_data', {'logs': current_logs})
         print(f"Logs:\n{current_logs}\n")
-        reading_logs = False  # Stop reading logs
-        current_logs = []  # Clear the buffer
+        current_logs, reading_logs = reset_logs()
     else:
-        # Try to match log pattern
         match = log_pattern.match(line)
         if match:
-            # It's a log line, parse and store it
             timestamp, event_type, value = match.groups()
             current_logs.append({
                 'timestamp': int(timestamp),
@@ -180,7 +224,6 @@ def read_logs(current_logs, line, log_pattern, reading_logs):
                 'value': int(value)
             })
         else:
-            # Received unexpected line while waiting for logs or end marker
             print(f"Warning: Received unexpected line while reading logs: '{line}'")
     return current_logs, reading_logs
 
@@ -189,39 +232,41 @@ def reset_logs():
     return [], False
 
 
-# Route and SocketIO handlers
-
 @app.route('/')
 def index():
-    """
-    Renders the main page of the web application.
-    """
     return render_template('index.html')
 
 
 @socketio.on("threshold_update")
 def threshold_update(data):
+    global MOISTURE_THRESH, LIGHT_THRESH
     if not ser: return
     key = data.get('key')
     value = data.get('value')
-    print(f"Received threshold update: {key} = {value}")  # Debug print
+    print(f"Received threshold update from client: {key} = {value}")
     if key not in ['MT', 'LT']:
         print(f"Invalid key for threshold update: {key}")
-        socketio.emit('log_error', {'message': f'Invalid threshold update: {key}'})
+        socketio.emit('log_error', {'message': f'Invalid threshold key: {key}'})
         return
 
     try:
-        val_int = max(min(int(value), 1023), 0)  # Ensure value is between 0 and 1023
-        if key == 'MT':
-            command = f"M{val_int}\n"  # Construct command like "m500\n"
-        else:
-            command = f"L{val_int}\n"
+        val_int = max(min(int(value), 1023), 0)
+        command_prefix = 'M' if key == 'MT' else 'L'
+        command = f"{command_prefix}{val_int}\n"
+
         with lock:
             ser.write(command.encode())
-        print(f"Sent command: {command.strip()}")
+        print(f"Sent command to Arduino: {command.strip()}")
+
+        # Update server-side stored threshold
+        if key == 'MT':
+            MOISTURE_THRESH = val_int
+        else:
+            LIGHT_THRESH = val_int
+
     except ValueError:
         print(f"Invalid value for threshold update: {value}")
-        socketio.emit('log_error', {'message': f'Invalid value for threshold update: {value}'})
+        socketio.emit('log_error', {'message': f'Invalid threshold value: {value}'})
     except Exception as e:
         print(f"Error sending threshold update: {e}")
         socketio.emit('log_error', {'message': f'Error sending threshold update: {e}'})
@@ -229,61 +274,72 @@ def threshold_update(data):
 
 @socketio.on("logs_request")
 def handle_log_request():
-    """
-    Handles request from frontend to fetch logs.
-    """
-    if not ser:  # Check serial port
+    if not ser:
         print("Log request failed: Serial port not available.")
         socketio.emit('log_error', {'message': 'Serial port not available.'})
         return
-
     print("Received log request from client.")
     command = "G\n"
     try:
         with lock:
-            ser.write(command.encode())  # Send command to Arduino
+            ser.write(command.encode())
         print(f"Sent command: {command.strip()}")
         socketio.emit('log_request_sent', {'message': 'Log request sent to Arduino.'})
     except Exception as e:
         print(f"Error sending command {command}: {e}")
-        socketio.emit('log_error', {'message': f'Error sending command to Arduino: {e}'})
+        socketio.emit('log_error', {'message': f'Error sending command {command}: {e}'})
+
 
 @socketio.on("clear_logs_request")
 def handle_clear_logs_request():
     """
     Handles request from frontend to clear logs.
     """
-    if not ser:  # Check serial port
+    if not ser:
         print("Clear logs request failed: Serial port not available.")
         socketio.emit('clear_logs_response', {'message': 'Serial port not available.'})
         return
-
     print("Received clear logs request from client.")
-    command = "D\n"  # Command to clear logs on Arduino
+    command = "D\n"
     try:
         with lock:
-            ser.write(command.encode())  # Send command to Arduino
+            ser.write(command.encode())
         print(f"Sent command: {command.strip()}")
     except Exception as e:
         print(f"Error sending command {command}: {e}")
         socketio.emit('clear_logs_response', {'message': f'Error clearing logs: {e}'})
 
 
+@socketio.on('connect')
+def handle_connect():
+    print(f'Client connected with SID: {request.sid}')
+    if MOISTURE_THRESH is not None: # Check if it has a value
+        socketio.emit('initial_threshold_update', {
+            'key': 'MT',
+            'value': MOISTURE_THRESH
+        }, room=request.sid) # 'room=request.sid' sends only to this client
+    if LIGHT_THRESH is not None: # Check if it has a value
+        socketio.emit('initial_threshold_update', {
+            'key': 'LT',
+            'value': LIGHT_THRESH
+        }, room=request.sid)
+
 if __name__ == '__main__':
     if ser:
         print(f"Serial port {ser.name} opened successfully.")
-        time.sleep(10)  # Allow Arduino to settle
+        time.sleep(2)  # Allow Arduino to settle
         ser.reset_input_buffer()  # Clear any stale data from Arduino's buffer
         print("Attempting initial time sync...")
         if not sync_time_internal():
-             print("Initial time sync failed. Arduino time may be incorrect until next sync.")
+            print("Initial time sync failed. Arduino time may be incorrect until next sync.")
         else:
-             print("Initial time sync command sent successfully.")
+            print("Initial time sync command sent successfully.")
+
+        request_initial_thresholds()
+
         Thread(target=sync_time, daemon=True).start()
         Thread(target=serial_reader, daemon=True).start()
     else:
         print("Running without serial connection.")
 
-    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)  # allow_unsafe_werkzeug for development auto-reload
-
-# TODO: Why only 147 logs are sent?
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

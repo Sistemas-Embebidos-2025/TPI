@@ -165,6 +165,27 @@ socket.on('clear_logs_response', function (data) {
 	if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
 });
 
+
+// SocketIO Listener for initial threshold updates from backend
+socket.on('initial_threshold_update', function(data) {
+    console.log("Received initial threshold update:", data);
+    const key = data.key; // 'MT' or 'LT'
+    const value = data.value;
+
+    // Find the slider and value display elements
+    const slider = $(`.threshold-input[data-type='${key}']`);
+    const valueDisplay = $(`#${key}Value`);
+
+    if (slider.length && valueDisplay.length) {
+        slider.val(value);          // Set the slider's value
+        valueDisplay.text(value);   // Update the displayed number
+        console.log(`Updated ${key} threshold to ${value} on UI.`);
+    } else {
+        console.warn(`Could not find UI elements for threshold: ${key}`);
+    }
+});
+
+
 // SocketIO Listener for Potential Errors
 socket.on('log_error', function (data) { // Listen for errors from backend
 	console.error("Error from backend:", data.message); // Log error

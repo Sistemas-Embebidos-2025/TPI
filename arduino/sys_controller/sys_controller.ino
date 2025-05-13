@@ -168,7 +168,21 @@ void handleCommand(const char *cmd) {
         logCurrentSystemState();
         return;
     }
-
+    if (strcmp(cmd, "X") == 0) { // Get Moisture Threshold
+        if (xSemaphoreTake(serMutex, portMAX_DELAY) == pdTRUE) {
+            Serial.print(F("X")); Serial.println(mTh);
+            xSemaphoreGive(serMutex);
+        }
+        return;
+    }
+    if (strcmp(cmd, "Z") == 0) { // Get Light Threshold
+        if (xSemaphoreTake(serMutex, portMAX_DELAY) == pdTRUE) {
+            Serial.print(F("Z")); Serial.println(lTh);
+            xSemaphoreGive(serMutex);
+        }
+        return;
+    }
+    
     // Key-Value Commands
     // Check length before accessing indices
     if (strlen(cmd) >= 2) {
