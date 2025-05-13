@@ -53,12 +53,7 @@ function initCharts() {
 	});
 }
 
-// Update sensor displays and charts
-socket.on('sensor_update', function (data) {
-	update_display(data);
-});
-
-function update_display(data) {
+function updateDisplay(data) {
 	// Update numeric displays
 	$('#moistureValue').text(data.moisture);
 	$('#lightValue').text(data.light);
@@ -79,108 +74,97 @@ function update_display(data) {
 	lightChart.update();
 }
 
-// Event Listener for Get Logs Button
+// Debounce function to limit frequent calls
+function debounce(func, delay) {
+	let timeout;
+	return function (...args) {
+		clearTimeout(timeout);
+		timeout = setTimeout(() => func.apply(this, args), delay);
+	};
+}
+
 if (getLogsButton) { // Check if button exists
 	getLogsButton.addEventListener('click', () => {
-		console.log("Requesting logs..."); // Log action
-		if (logStatus) logStatus.textContent = 'Requesting logs...'; // Update status
-		socket.emit('logs_request'); // Emit event to backend
+		logStatus.textContent = 'Requesting logs...';
+		socket.emit('logs_request');
 		// Clear the table while waiting for new logs
 		if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
 	});
 }
 
-// SocketIO Listener for Log Data
-socket.on('log_data', function (data) { // Listen for logs from backend
-	console.log("Received logs:", data.logs); // Log received data
-	if (logTableBody && data.logs) { // Check if table body and logs exist
-		logTableBody.innerHTML = ''; // Clear previous logs (optional, could append too)
-
-		if (data.logs.length === 0) {
-			if (logStatus) logStatus.textContent = 'No logs found or received.'; // Update status
-			return;
-		}
-
-		data.logs.forEach(log => { // Iterate through each log entry
-			const row = logTableBody.insertRow(); // Create new table row
-
-			const timestampCell = row.insertCell();
-			// Convert Unix timestamp to readable date/time
-			const date = new Date(log.timestamp * 1000); // Arduino sends seconds timestamp
-			timestampCell.textContent = date.toLocaleString(); // Format date nicely
-
-			const typeCell = row.insertCell();
-			typeCell.textContent = log.type; // Show raw type number
-
-			const valueCell = row.insertCell();
-			valueCell.textContent = log.value; // Show raw value
-
-			const descriptionCell = row.insertCell(); // Add a cell for description
-			descriptionCell.textContent = eventTypeMap[log.type] || "Unknown Event"; // Map type to string
-		});
-
-		if (logStatus) logStatus.textContent = `Received ${data.logs.length} log entries.`; // Update status
-	} else {
-		console.error("Log table body not found or no logs received."); // Error handling
-		if (logStatus) logStatus.textContent = 'Error displaying logs.'; // Update status
-	}
-});
-
 if (clearLogsButton) { // Check if button exists
 	clearLogsButton.addEventListener('click', () => {
-		console.log("Clearing logs..."); // Log action
-		if (logStatus) logStatus.textContent = 'Clearing logs...'; // Update status
+		logStatus.textContent = 'Clearing logs...';
 		socket.emit('clear_logs_request'); // Emit event to backend
 	});
 }
 
+socket.on('sensor_update', updateDisplay);
+
+socket.on('log_data', (data) => { // Listen for logs from backend
+	console.log("Received logs:", data.logs); // Log received data
+
+	if (!logTableBody || !data.logs) {
+		logStatus.textContent = 'Error displaying logs.';
+		return;
+	}
+
+	logTableBody.innerHTML = ''; // Clear previous logs (could append too)
+	if (data.logs.length === 0) {
+		logStatus.textContent = 'No logs found or received.';
+		return;
+	}
+
+	data.logs.forEach(log => { // Iterate through each log entry
+		const row = logTableBody.insertRow(); // Create new table row
+		row.insertCell().textContent = new Date(log.timestamp * 1000).toLocaleString();
+		row.insertCell().textContent = log.type;
+		row.insertCell().textContent = log.value;
+		row.insertCell().textContent = eventTypeMap[log.type] || "Unknown Event";
+	});
+
+	logStatus.textContent = `Received ${data.logs.length} log entries.`;
+});
+
+
 // SocketIO Listener for Clear Logs Response
-socket.on('clear_logs_response', function (data) {
-	console.log("Clear logs response:", data.message); // Log response
-	if (logStatus) logStatus.textContent = data.message; // Update status
-	if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
+socket.on('clear_logs_response', (data) => {
+	logStatus.textContent = data.message;
+	if (logTableBody) logTableBody.innerHTML = '';
 });
 
 // SocketIO Listener for synced threshold updates from backend.
-socket.on('threshold_update', function (data) {
+socket.on('threshold_update', (data) => {
 	console.log("Received threshold update:", data);
 	const {key, value} = data;
-
-	// Find the slider and value display elements
 	const slider = $(`.threshold-input[data-type='${key}']`);
 	const valueDisplay = $(`#${key}Value`);
+
+	// Find the slider and value display elements
 
 	if (slider.length && valueDisplay.length) {
 		// Check if the current slider value is already what we received.
 		if (parseInt(slider.val()) !== parseInt(value)) {
-			slider.val(value); // Set the slider's value
+			slider.val(value);
 		}
-		valueDisplay.text(value); // Update the displayed number
-		console.log(`UI Updated for ${key} threshold to ${value}.`);
-	} else {
-		console.warn(`Could not find UI elements for threshold: ${key}`);
+		valueDisplay.text(value);
 	}
 });
 
-// The existing vanilla JS functions for threshold display and sending:
+socket.on('error', (data) => {
+	logStatus.textContent = `Error: ${data.message}`;
+});
+
+// Threshold update functions
 function updateThresholdDisplay(slider, displayId) {
-	// This function is called on 'oninput' and updates the local text.
 	document.getElementById(displayId).textContent = slider.value;
 }
 
-function sendThresholdUpdate(slider) {
-	// This function is called on 'onchange' (when user releases mouse from slider).
-	const type = slider.getAttribute('data-type'); // 'MT' or 'LT'
+const sendThresholdUpdate = debounce((slider) => {
+	const type = slider.getAttribute('data-type');
 	const value = slider.value;
 	socket.emit('threshold_update', {key: type, value: value});
-	console.log(`User sent threshold update via UI: ${type} = ${value}`);
-}
-
-// SocketIO Listener for Potential Errors
-socket.on('log_error', function (data) { // Listen for errors from backend
-	console.error("Error from backend:", data.message); // Log error
-	if (logStatus) logStatus.textContent = `Error: ${data.message}`; // Display error
-});
+}, 300);
 
 // Initialize charts when page loads
 $(document).ready(initCharts);
