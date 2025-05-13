@@ -1,5 +1,5 @@
-const socket = io();  // Connect to the web socket  "http://" + location.hostname + ":" + location.port
-const logTableBody = document.getElementById('logTable')?.querySelector('tbody'); // Get table body
+const socket = io();
+const logTableBody = document.getElementById('logTable')?.querySelector('tbody');
 const getLogsButton = document.getElementById('getLogsButton');
 const logStatus = document.getElementById('logStatus');
 const clearLogsButton = document.getElementById('clearLogsButton');
@@ -79,29 +79,6 @@ function update_display(data) {
 	lightChart.update();
 }
 
-// Threshold Controls
-$('.threshold-input').on('input', function () {
-	const key = $(this).data('type'); // MT or LT
-	const value = $(this).val();
-	$(`#${key}Value`).text(value);
-	// Use the command key expected by Arduino
-	const commandKey = `${key}`;
-	socket.emit('threshold_update', {key: commandKey, value});
-	console.log(`Threshold Update: ${key} = ${value}`);
-});
-
-// Add these functions for updating and sending threshold values
-function updateThresholdDisplay(slider, displayId) {
-	document.getElementById(displayId).textContent = slider.value;
-}
-
-function sendThresholdUpdate(slider) {
-	const type = slider.getAttribute('data-type');
-	const value = slider.value;
-	socket.emit('threshold_update', {key: type, value: value});
-	console.log(`Sent threshold update: ${type} = ${value}`);
-}
-
 // Event Listener for Get Logs Button
 if (getLogsButton) { // Check if button exists
 	getLogsButton.addEventListener('click', () => {
@@ -112,7 +89,6 @@ if (getLogsButton) { // Check if button exists
 		if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
 	});
 }
-
 
 // SocketIO Listener for Log Data
 socket.on('log_data', function (data) { // Listen for logs from backend
@@ -165,26 +141,40 @@ socket.on('clear_logs_response', function (data) {
 	if (logTableBody) logTableBody.innerHTML = ''; // Clear the log table
 });
 
+// SocketIO Listener for synced threshold updates from backend.
+socket.on('threshold_update', function (data) {
+	console.log("Received threshold update:", data);
+	const {key, value} = data;
 
-// SocketIO Listener for initial threshold updates from backend
-socket.on('initial_threshold_update', function(data) {
-    console.log("Received initial threshold update:", data);
-    const key = data.key; // 'MT' or 'LT'
-    const value = data.value;
+	// Find the slider and value display elements
+	const slider = $(`.threshold-input[data-type='${key}']`);
+	const valueDisplay = $(`#${key}Value`);
 
-    // Find the slider and value display elements
-    const slider = $(`.threshold-input[data-type='${key}']`);
-    const valueDisplay = $(`#${key}Value`);
-
-    if (slider.length && valueDisplay.length) {
-        slider.val(value);          // Set the slider's value
-        valueDisplay.text(value);   // Update the displayed number
-        console.log(`Updated ${key} threshold to ${value} on UI.`);
-    } else {
-        console.warn(`Could not find UI elements for threshold: ${key}`);
-    }
+	if (slider.length && valueDisplay.length) {
+		// Check if the current slider value is already what we received.
+		if (parseInt(slider.val()) !== parseInt(value)) {
+			slider.val(value); // Set the slider's value
+		}
+		valueDisplay.text(value); // Update the displayed number
+		console.log(`UI Updated for ${key} threshold to ${value}.`);
+	} else {
+		console.warn(`Could not find UI elements for threshold: ${key}`);
+	}
 });
 
+// The existing vanilla JS functions for threshold display and sending:
+function updateThresholdDisplay(slider, displayId) {
+	// This function is called on 'oninput' and updates the local text.
+	document.getElementById(displayId).textContent = slider.value;
+}
+
+function sendThresholdUpdate(slider) {
+	// This function is called on 'onchange' (when user releases mouse from slider).
+	const type = slider.getAttribute('data-type'); // 'MT' or 'LT'
+	const value = slider.value;
+	socket.emit('threshold_update', {key: type, value: value});
+	console.log(`User sent threshold update via UI: ${type} = ${value}`);
+}
 
 // SocketIO Listener for Potential Errors
 socket.on('log_error', function (data) { // Listen for errors from backend

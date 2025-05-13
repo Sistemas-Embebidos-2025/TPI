@@ -160,7 +160,7 @@ def handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, re
         try:
             MOISTURE_THRESH = int(mt_match.group(1))
             print(f"Received initial moisture threshold: {MOISTURE_THRESH}")
-            socketio.emit('initial_threshold_update', {
+            socketio.emit('threshold_update', {
                 'key': 'MT',
                 'value': MOISTURE_THRESH
             })
@@ -170,7 +170,7 @@ def handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, re
         try:
             LIGHT_THRESH = int(lt_match.group(1))
             print(f"Received initial light threshold: {LIGHT_THRESH}")
-            socketio.emit('initial_threshold_update', {
+            socketio.emit('threshold_update', {
                 'key': 'LT',
                 'value': LIGHT_THRESH
             })
@@ -240,10 +240,13 @@ def index():
 @socketio.on("threshold_update")
 def threshold_update(data):
     global MOISTURE_THRESH, LIGHT_THRESH
-    if not ser: return
+    if not ser:
+        socketio.emit('log_error', {'message': 'Serial port not available.'}, room=request.sid)  # Respond to sender
+        return
     key = data.get('key')
     value = data.get('value')
-    print(f"Received threshold update from client: {key} = {value}")
+    print(f"Received threshold update from client from client SID {request.sid}: {key} = {value}")
+
     if key not in ['MT', 'LT']:
         print(f"Invalid key for threshold update: {key}")
         socketio.emit('log_error', {'message': f'Invalid threshold key: {key}'})
@@ -254,22 +257,32 @@ def threshold_update(data):
         command_prefix = 'M' if key == 'MT' else 'L'
         command = f"{command_prefix}{val_int}\n"
 
-        with lock:
-            ser.write(command.encode())
-        print(f"Sent command to Arduino: {command.strip()}")
+        try:
+            with lock:
+                ser.write(command.encode())
+            print(f"Sent command to Arduino: {command.strip()}")
+            success_arduino = True
+        except Exception as e:
+            print(f"Error sending threshold command to Arduino: {e}")
+            socketio.emit('log_error', {'message': f'Error sending threshold to Arduino: {e}'}, room=request.sid)
+            return  # Don't broadcast if Arduino command failed
 
-        # Update server-side stored threshold
-        if key == 'MT':
-            MOISTURE_THRESH = val_int
-        else:
-            LIGHT_THRESH = val_int
+        if success_arduino:
+            # Update server-side stored threshold
+            if key == 'MT':
+                MOISTURE_THRESH = val_int
+            else:  # LT
+                LIGHT_THRESH = val_int
+
+            print(f"Broadcasting synced threshold: {key} = {val_int}")
+            socketio.emit('threshold_update', {'key': key, 'value': val_int})
 
     except ValueError:
         print(f"Invalid value for threshold update: {value}")
-        socketio.emit('log_error', {'message': f'Invalid threshold value: {value}'})
-    except Exception as e:
-        print(f"Error sending threshold update: {e}")
-        socketio.emit('log_error', {'message': f'Error sending threshold update: {e}'})
+        socketio.emit('log_error', {'message': f'Invalid threshold value: {value}'}, room=request.sid)
+    except Exception as e:  # Catch any other unexpected errors
+        print(f"Unexpected error during threshold update: {e}")
+        socketio.emit('log_error', {'message': f'Unexpected error during threshold update: {e}'}, room=request.sid)
 
 
 @socketio.on("logs_request")
@@ -314,12 +327,12 @@ def handle_clear_logs_request():
 def handle_connect():
     print(f'Client connected with SID: {request.sid}')
     if MOISTURE_THRESH is not None: # Check if it has a value
-        socketio.emit('initial_threshold_update', {
+        socketio.emit('threshold_update', {
             'key': 'MT',
             'value': MOISTURE_THRESH
         }, room=request.sid) # 'room=request.sid' sends only to this client
     if LIGHT_THRESH is not None: # Check if it has a value
-        socketio.emit('initial_threshold_update', {
+        socketio.emit('threshold_update', {
             'key': 'LT',
             'value': LIGHT_THRESH
         }, room=request.sid)
