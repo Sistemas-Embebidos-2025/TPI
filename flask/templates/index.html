@@ -47,46 +47,7 @@
         </div>
     </div>
 
-    <div class="card">
-        <h2>Control Modes</h2>
-        <div class="control-group">
-            <div class="mode-switch">
-                <label>Irrigation Mode:
-                    <label class="switch">
-                        <input type="checkbox" id="autoIrrigationToggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                    <span id="irrigationModeStatus" class="mode-status">Auto</span>
-                </label>
-            </div>
-            <div class="mode-switch">
-                <label>Light Mode:
-                    <label class="switch">
-                        <input type="checkbox" id="autoLightToggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                    <span id="lightModeStatus" class="mode-status">Auto</span>
-                </label>
-            </div>
-        </div>
-    </div>
-
-    <!-- Manual Controls -->
-    <div class="card">
-        <h2>Manual Controls</h2>
-        <div class="control-group manual-controls" id="irrigationControls" style="display: none;">
-            <button id="manualIrrigationToggle" class="control-btn">
-                Irrigation: <span id="irrigationState">OFF</span>
-            </button>
-        </div>
-        <div class="control-group manual-controls" id="lightControls" style="display: none;">
-            <label>Light Brightness:
-                <input type="range" min="0" max="255" id="manualLightSlider">
-                <span class="value-display" id="manualLightValue">0</span>
-            </label>
-        </div>
-    </div>
-
+    <!-- Logging Controls -->
     <div class="card"><h2>Event Log</h2>
         <button id="getLogsButton" class="control-btn">Get Logs</button>
         <button id="clearLogsButton" class="control-btn">Clear Logs</button>

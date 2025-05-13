@@ -7,13 +7,11 @@ const clearLogsButton = document.getElementById('clearLogsButton');
 // Map Arduino EventType enum values to readable strings
 const eventTypeMap = {
 	0: "Auto Irrigation",
-	1: "Manual Irrigation",
-	2: "Auto Light",
-	3: "Manual Light",
-	4: "Light Threshold Change",
-	5: "Moisture Threshold Change",
-	6: "Moisture Measurement",
-	7: "Light Measurement",
+	1: "Auto Light",
+	2: "Light Threshold Change",
+	3: "Moisture Threshold Change",
+	4: "Moisture Measurement",
+	5: "Light Measurement",
 };
 
 let moistureChart, lightChart;
@@ -80,41 +78,6 @@ function update_display(data) {
 	moistureChart.update();
 	lightChart.update();
 }
-
-// Auto Mode Toggles
-$('#autoIrrigationToggle').change(function () {
-	const state = $(this).prop('checked');
-	$('#irrigationModeStatus').text(state ? 'Auto' : 'Manual');
-	$('#irrigationControls').toggleClass('active', !state);
-	socket.emit('toggle_auto_control', {key: 'AI', state: state});
-	console.log("Auto Irrigation Toggle:", state);
-});
-
-$('#autoLightToggle').change(function () {
-	const state = $(this).prop('checked');
-	$('#lightModeStatus').text(state ? 'Auto' : 'Manual');
-	$('#lightControls').toggleClass('active', !state);
-	socket.emit('toggle_auto_control', {key: 'AL', state: state});
-	console.log("Auto Light Toggle:", state);
-});
-
-// Manual Irrigation Control
-// TODO: Get current state (irrigation on/off) from server
-$('#manualIrrigationToggle').click(() => {
-	const currentState = $('#irrigationState').text() === 'ON';
-	const newState = !currentState;
-	$('#irrigationState').text(newState ? 'ON' : 'OFF');
-	socket.emit('manual_control', {key: 'MI', state: newState});
-	console.log("Manual Irrigation Toggle:", newState);
-});
-
-// Manual Light Control
-$('#manualLightSlider').on('input', function () {
-	const brightness = $(this).val();
-	$('#manualLightValue').text(brightness);
-	socket.emit('manual_control', {key: 'ML', state: brightness});
-	console.log("Manual Light Control:", brightness);
-});
 
 // Threshold Controls
 $('.threshold-input').on('input', function () {
@@ -204,7 +167,7 @@ socket.on('clear_logs_response', function (data) {
 
 // SocketIO Listener for Potential Errors
 socket.on('log_error', function (data) { // Listen for errors from backend
-	console.error("Log retrieval error:", data.message); // Log error
+	console.error("Error from backend:", data.message); // Log error
 	if (logStatus) logStatus.textContent = `Error: ${data.message}`; // Display error
 });
 
