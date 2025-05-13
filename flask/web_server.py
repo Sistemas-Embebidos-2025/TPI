@@ -165,6 +165,7 @@ def read_logs(current_logs, line, log_pattern, reading_logs):
     if line == "E":
         print("Detected E (End logs) marker.")
         socketio.emit('log_data', {'logs': current_logs})  # Send collected logs
+        print(f"Logs:\n{current_logs}\n")
         reading_logs = False  # Stop reading logs
         current_logs = []  # Clear the buffer
     else:
@@ -263,7 +264,6 @@ def handle_clear_logs_request():
         with lock:
             ser.write(command.encode())  # Send command to Arduino
         print(f"Sent command: {command.strip()}")
-        socketio.emit('clear_logs_response', {'message': 'Logs cleared successfully.'})
     except Exception as e:
         print(f"Error sending command {command}: {e}")
         socketio.emit('clear_logs_response', {'message': f'Error clearing logs: {e}'})
@@ -272,6 +272,8 @@ def handle_clear_logs_request():
 if __name__ == '__main__':
     if ser:
         print(f"Serial port {ser.name} opened successfully.")
+        time.sleep(10)  # Allow Arduino to settle
+        ser.reset_input_buffer()  # Clear any stale data from Arduino's buffer
         print("Attempting initial time sync...")
         if not sync_time_internal():
              print("Initial time sync failed. Arduino time may be incorrect until next sync.")

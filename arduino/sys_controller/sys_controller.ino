@@ -43,7 +43,7 @@ uint16_t mTh = 500;
 uint16_t lTh = 500;
 uint16_t moisture, light;
 uint8_t globalBrightness = 0;
-volatile uint32_t currentTime = 0;
+volatile uint32_t currentTime = 1;
 
 const int sensorDelay = pdMS_TO_TICKS(2000);
 const int ctrlDelay = pdMS_TO_TICKS(2500);
@@ -82,7 +82,7 @@ void printLogs() {
              addr += RECORD_SIZE) {
             EEPROM.get(addr, e);
             // We use timestamp==0xFFFFFFFF to mark “empty” slots
-            if (e.timestamp == 0xFFFFFFFFUL || e.timestamp == 0) break;
+            if (e.timestamp == 0xFFFFFFFFUL) break;
 
             // Print as CSV: timestamp,event_type,event_value
             Serial.print(e.timestamp); Serial.print(F(",")); Serial.print(e.eventType); Serial.print(F(",")); Serial.println(e.value);

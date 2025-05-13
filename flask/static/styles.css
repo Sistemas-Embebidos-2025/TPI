@@ -116,7 +116,7 @@ canvas {
 	padding: 10px;
 }
 
-/* Manual Controls */
+/* Log Controls */
 .control-btn {
 	background: #4299e1;
 	color: white;
@@ -203,15 +203,6 @@ input:checked + .slider:before {
 	font-weight: bold;
 	color: #2d3748;
 	margin-left: 10px;
-}
-
-.manual-controls {
-	transition: all 0.3s ease;
-}
-
-/* Manual Controls Visibility */
-.manual-controls.active {
-	display: block !important;
 }
 
 .log-table {
