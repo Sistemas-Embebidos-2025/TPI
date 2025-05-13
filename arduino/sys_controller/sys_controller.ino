@@ -79,9 +79,9 @@ void setup() {
     sensorMutex = xSemaphoreCreateMutex();
     nextLogAddress = findNextEEPROMAddress();
 
-    xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 2, NULL);
-    xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 2, NULL);
-    xTaskCreate(serialComTask, "Serial", 258, NULL, 2, NULL);
+    xTaskCreate(readSensorsTask, "Sensors", 128, NULL, 1, NULL);
+    xTaskCreate(autoControlTask, "AutoCtrl", 128, NULL, 1, NULL);
+    xTaskCreate(serialComTask, "Serial", 256, NULL, 1, NULL);
     xTaskCreate(updateTimeTask, "Time", 128, NULL, 1, NULL);
 
     vTaskStartScheduler();
@@ -111,7 +111,7 @@ int findNextEEPROMAddress() {
 void printLogs() {
     Event e;
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-        Serial.println(F("TS,TYPE,VALUE"));  // header row
+        Serial.println(F("TS,T,V"));  // header row
         for (int addr = 0; addr < EEPROM.length(); addr += RECORD_SIZE) {
             EEPROM.get(addr, e);
             // We use timestamp==0xFFFFFFFF to mark “empty” slots
@@ -144,6 +144,7 @@ void clearLogs() {
 void handleCommand(const String &cmd) {
     if (cmd[0] == 'T') {
         current_time = cmd.substring(1).toInt();
+        Serial.println(current_time);
         return;
     }
     if (cmd == "GL") {
@@ -156,7 +157,7 @@ void handleCommand(const String &cmd) {
     }
     String key = cmd.substring(0, 2);
     String valStr = cmd.substring(2);
-    // Serial.println("key: " + key + " & val: " + String(valStr));
+    // Serial.println("k " + key + " v " + String(valStr));
     int val = valStr.toInt();
     // Serial.println(val);
     if (key == "LT") {
@@ -189,7 +190,7 @@ void handleCommand(const String &cmd) {
         logEvent(MAN_LIGHT, brightness);
         return;
     }
-    unknownCommand("key: " + key + "& val: " + String(val));
+    unknownCommand(cmd);
 }
 
 void setIrrigationPins(bool state) {
@@ -206,7 +207,7 @@ void setLightPins(int brightness) {
 
 void unknownCommand(const String &cmd) {
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-        Serial.print(F("UNKNOWN_CMD: "));
+        Serial.print(F("UNK:"));
         Serial.println(cmd);
         xSemaphoreGive(serialMutex);
     }
@@ -270,7 +271,7 @@ void autoControlTask(void *pvParameters) {
             brightness = constrain(brightness, 0, 255);
             setLightPins(brightness);
             if (localL < light_threshold) {
-                logEvent(AUTO_LIGHT, brightness);
+                logEvent(AUTO_LIGHT, 1);
             }
         }
 
@@ -284,8 +285,8 @@ void serialComTask(void *pvParameters) {
             String cmd = Serial.readStringUntil('\n');
             cmd.trim();  // Remove leading/trailing whitespace
 
-            Serial.print(F("Received command: "));  // Debugging
-            Serial.println(cmd);
+            // Serial.print(F("CMD:"));  // Debugging
+            // Serial.println(cmd);
 
             if (cmd.length() > 1)
                 handleCommand(cmd);

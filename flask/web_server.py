@@ -82,9 +82,8 @@ def serial_reader():
             print("Serial port closed or error while reading logs. Sending partial logs.")
             if current_logs:
                 socketio.emit('log_data', {'logs': current_logs})
-            reading_logs = False
-            current_logs = []
-            time.sleep(100)  # Pause before trying again
+            current_logs, reading_logs = reset_logs()
+            time.sleep(10)  # Pause before trying again
             continue
 
         # Handle serial reading with timeout
@@ -92,15 +91,12 @@ def serial_reader():
 
         try:
             if ser and ser.in_waiting > 0:  # Check if data exists before reading
-                line_bytes = ser.readline()
-                line = line_bytes.decode(errors='ignore').strip()
+                line = ser.readline().decode(errors='ignore').strip()
             elif reading_logs:
-                # If reading logs and no data comes within timeout, assume Arduino stopped
-                # This is a fallback in case EL is missed
+                # If reading logs and no data comes within timeout, assume Arduino stopped (fallback in case EL is missed)
                 print("Timeout waiting for log data or EL. Sending collected logs.")
                 socketio.emit('log_data', {'logs': current_logs})
-                reading_logs = False
-                current_logs = []
+                current_logs, reading_logs = reset_logs()
                 time.sleep(10)  # Short sleep after timeout
                 continue
         except serial.SerialException as e:  # Handle serial errors during read
@@ -108,8 +104,7 @@ def serial_reader():
             if reading_logs:
                 print("Aborting log read due to serial error.")
                 socketio.emit('log_error', {'message': f'Serial error during log read: {e}'})
-                reading_logs = False
-                current_logs = []
+                current_logs, reading_logs = reset_logs()
             time.sleep(10)
             continue
         except UnicodeDecodeError:
@@ -118,8 +113,7 @@ def serial_reader():
         except Exception as e:
             print(f"Unexpected error in serial_reader loop: {e}")
             if reading_logs:  # Reset state on unexpected errors
-                reading_logs = False
-                current_logs = []
+                current_logs, reading_logs = reset_logs()
             time.sleep(10)
             continue  # Continue the loop
 
@@ -149,7 +143,7 @@ def serial_reader():
                     # Received unexpected line while waiting for logs or EL
                     print(f"Warning: Received unexpected line while reading logs: '{line}'")
         else:
-            if line == "TS,TYPE,VALUE":  # Check for log header
+            if line == "TS,T,V":  # Check for log header
                 print("Detected log header, starting log capture.")
                 reading_logs = True  # Start reading logs
                 current_logs = []  # Clear previous logs
@@ -169,7 +163,7 @@ def serial_reader():
                     'moisture': data.get('M', 0),
                     'light': data.get('L', 0)
                 })
-            elif line.startswith("UNKNOWN_CMD:"):
+            elif line.startswith("UNK:"):
                 # Handle unknown command from Arduino
                 print(f"Arduino error handling command: {line}")
                 socketio.emit('log_error', {'message': f'Arduino error handling command: {line}'})
@@ -177,6 +171,10 @@ def serial_reader():
                 # Emit other non-log, non-sensor data if needed
                 if line:
                     print(f"Received serial data: {line}")  # Debug print
+
+
+def reset_logs():
+    return [], False
 
 
 # Route and SocketIO handlers
