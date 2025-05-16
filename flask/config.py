@@ -1,0 +1,7 @@
+SERIAL_TIMEOUT = 5
+BAUD_RATE = 115200
+SERIAL_PORT = 'COM4'
+
+# NTP Server configuration
+NTP_SERVER = 'pool.ntp.org'
+TIME_ZONE_OFFSET = 0

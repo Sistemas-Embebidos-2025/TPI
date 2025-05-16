@@ -1,4 +1,4 @@
-import re  # Import regex module
+import re
 import time
 from datetime import datetime, timedelta
 from threading import Thread, Lock
@@ -8,12 +8,13 @@ import serial
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 
+from config import SERIAL_TIMEOUT, BAUD_RATE, SERIAL_PORT, NTP_SERVER, TIME_ZONE_OFFSET
+
 app = Flask(__name__)
 socketio = SocketIO(app)
-# Ensure you use the correct COM port for your system
+
 try:
-    # ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1) # Linux
-    ser = serial.Serial('COM4', 115200, timeout=5)  # Opens the serial port COMX (WINDOWS)
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=SERIAL_TIMEOUT)
 except serial.SerialException as port_error:
     print(f"Error opening serial port: {port_error}")
     ser = None  # Set ser to None if port cannot be opened
@@ -23,12 +24,7 @@ lock = Lock()
 MOISTURE_THRESH = 500
 LIGHT_THRESH = 500
 
-# NTP Server configuration
-NTP_SERVER = 'pool.ntp.org'
-TIME_ZONE_OFFSET = 0  # Argentina Time (UTC-3)
 
-
-# NTP and Time Sync Functions (keep as is)
 def get_ntp_time():
     client = ntplib.NTPClient()
     try:
@@ -43,22 +39,16 @@ def get_ntp_time():
 
 def sync_time_internal():
     """Attempts a single time sync."""
-    if not ser:
-        print("sync_time_internal: Serial port not available.")
-        return False  # Indicate failure
     try:
         current_time = int(get_ntp_time())
         command = f"T{current_time}\n"
-        with lock:
-            ser.write(command.encode())
-        print(f"Time sync command sent: T{current_time} | {datetime.fromtimestamp(current_time)}")
-        time.sleep(0.5)
+        send_arduino_command(command)
         return True  # Indicate success
     except ntplib.NTPException as e:
         print(f"Initial NTP sync failed: {e}")
         return False
     except Exception as e:
-        print(f"Initial Time sync failed (other error): {e}")
+        print(f"Initial Time sync failed: {e}")
         return False
 
 
@@ -72,22 +62,10 @@ def sync_time():
 
 def request_initial_thresholds():
     """Requests initial thresholds from Arduino."""
-    if not ser:
-        print("request_initial_thresholds: Serial port not available.")
-        return
-    try:
-        print("Requesting initial moisture threshold...")
-        with lock:
-            ser.write(b"X\n")
-        time.sleep(0.5)  # Give Arduino time to respond
-
-        print("Requesting initial light threshold...")
-        with lock:
-            ser.write(b"Z\n")
-        time.sleep(0.5)  # Give Arduino time to respond
-        print("Initial threshold requests sent.")
-    except Exception as e:
-        print(f"Error requesting initial thresholds: {e}")
+    print("Requesting initial moisture threshold...")
+    send_arduino_command("X\n")
+    print("Requesting initial light threshold...")
+    send_arduino_command("Z\n")
 
 
 def serial_reader():
@@ -240,9 +218,6 @@ def index():
 @socketio.on("threshold_update")
 def threshold_update(data):
     global MOISTURE_THRESH, LIGHT_THRESH
-    if not ser:
-        socketio.emit('error', {'message': 'Serial port not available.'}, room=request.sid)  # Respond to sender
-        return
     key = data.get('key')
     value = data.get('value')
     print(f"Received threshold update from client from client SID {request.sid}: {key} = {value}")
@@ -256,16 +231,7 @@ def threshold_update(data):
         val_int = max(min(int(value), 1023), 0)
         command_prefix = 'M' if key == 'MT' else 'L'
         command = f"{command_prefix}{val_int}\n"
-
-        try:
-            with lock:
-                ser.write(command.encode())
-            print(f"Sent command to Arduino: {command.strip()}")
-            success_arduino = True
-        except Exception as e:
-            print(f"Error sending threshold command to Arduino: {e}")
-            socketio.emit('error', {'message': f'Error sending threshold to Arduino: {e}'}, room=request.sid)
-            return  # Don't broadcast if Arduino command failed
+        success_arduino = send_arduino_command(command)
 
         if success_arduino:
             # Update server-side stored threshold
@@ -287,20 +253,10 @@ def threshold_update(data):
 
 @socketio.on("logs_request")
 def handle_log_request():
-    if not ser:
-        print("Log request failed: Serial port not available.")
-        socketio.emit('error', {'message': 'Serial port not available.'})
-        return
     print("Received log request from client.")
     command = "G\n"
-    try:
-        with lock:
-            ser.write(command.encode())
-        print(f"Sent command: {command.strip()}")
+    if send_arduino_command(command):
         socketio.emit('log_request_sent', {'message': 'Log request sent to Arduino.'})
-    except Exception as e:
-        print(f"Error sending command {command}: {e}")
-        socketio.emit('error', {'message': f'Error sending command {command}: {e}'})
 
 
 @socketio.on("clear_logs_request")
@@ -308,19 +264,10 @@ def handle_clear_logs_request():
     """
     Handles request from frontend to clear logs.
     """
-    if not ser:
-        print("Clear logs request failed: Serial port not available.")
-        socketio.emit('clear_logs_response', {'message': 'Serial port not available.'})
-        return
+
     print("Received clear logs request from client.")
     command = "D\n"
-    try:
-        with lock:
-            ser.write(command.encode())
-        print(f"Sent command: {command.strip()}")
-    except Exception as e:
-        print(f"Error sending command {command}: {e}")
-        socketio.emit('clear_logs_response', {'message': f'Error clearing logs: {e}'})
+    send_arduino_command(command)
 
 
 @socketio.on('connect')
@@ -336,6 +283,24 @@ def handle_connect():
             'key': 'LT',
             'value': LIGHT_THRESH
         }, room=request.sid)
+
+
+def send_arduino_command(command_str: str):
+    """Sends a command string to the Arduino, ensuring it's newline terminated."""
+    if not ser:
+        print(f"Serial port not available. Cannot send command: {command_str}")
+        return False
+    try:
+        full_command = command_str if command_str.endswith('\n') else f"{command_str}\n"
+        with lock:
+            ser.write(full_command.encode())
+        print(f"Sent command to Arduino: {full_command.strip()}")
+        time.sleep(0.1)
+        return True
+    except Exception as e:
+        print(f"Error sending command '{command_str}': {e}")
+        socketio.emit('error', {'message': f'Error sending command {command_str}: {e}'})
+        return False
 
 
 if __name__ == '__main__':
