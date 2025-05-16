@@ -4,7 +4,7 @@ const getLogsButton = document.getElementById('getLogsButton');
 const logStatus = document.getElementById('logStatus');
 const clearLogsButton = document.getElementById('clearLogsButton');
 
-// Map Arduino EventType enum values to readable strings
+// Map Arduino EventType  enum values to readable strings
 const eventTypeMap = {
 	0: "Auto Irrigation",
 	1: "Auto Light",
