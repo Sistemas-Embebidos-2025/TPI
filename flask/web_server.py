@@ -108,13 +108,6 @@ def serial_reader():
         try:
             if ser and ser.in_waiting > 0:
                 line = ser.readline().decode(errors="ignore").strip()
-            elif reading_logs:
-                logger.warning(f"Timeout waiting for log data or {LOG_END} (End logs). Sending collected logs.")
-                if current_logs:  # Ensure current_logs is not empty
-                    socketio.emit("log_data", {"logs": current_logs})
-                current_logs, reading_logs = reset_logs()
-                time.sleep(1)
-                continue
         except serial.SerialException as e:
             logger.error(f"Serial Exception during read: {e}")
             if reading_logs:
@@ -311,7 +304,7 @@ def send_arduino_command(command_str: str):
         full_command = command_str if command_str.endswith('\n') else f"{command_str}\n"
         with lock:
             ser.write(full_command.encode())
-        logger.info(f"Arduino sent command: {full_command}")
+        logger.info(f"Sent command to Arduino: {full_command}")
         time.sleep(0.1)
         return True
     except Exception as e:

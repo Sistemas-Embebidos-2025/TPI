@@ -96,6 +96,7 @@ if (clearLogsButton) { // Check if button exists
 	clearLogsButton.addEventListener('click', () => {
 		logStatus.textContent = 'Clearing logs...';
 		socket.emit('clear_logs_request'); // Emit event to backend
+		if (logTableBody) logTableBody.innerHTML = ''; // Clear old logs
 	});
 }
 
@@ -126,12 +127,6 @@ socket.on('log_data', (data) => { // Listen for logs from backend
 	logStatus.textContent = `Received ${data.logs.length} log entries.`;
 });
 
-
-// SocketIO Listener for Clear Logs Response
-socket.on('clear_logs_response', (data) => {
-	logStatus.textContent = data.message;
-	if (logTableBody) logTableBody.innerHTML = '';
-});
 
 // SocketIO Listener for synced threshold updates from backend.
 socket.on('threshold_update', (data) => {
