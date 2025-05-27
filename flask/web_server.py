@@ -25,6 +25,7 @@ lock = Lock()
 MOISTURE_THRESH = 500
 LIGHT_THRESH = 500
 
+SUCCESS = "OK"
 ERROR = "R"
 CMD_TIME = 'T'
 CMD_SET_LIGHT_THRESH = 'L'
@@ -144,10 +145,13 @@ def handle_command(current_logs, line, reading_logs):
     mt_match = moisture_th_pattern.match(line)
     lt_match = light_th_pattern.match(line)
     sensor_match = sensor_data_pattern.match(line)
-    if mt_match:
+    if line == SUCCESS:
+        logger.info("Command executed successfully.")
+        socketio.emit("info", {"message": "Command executed successfully."})
+    elif mt_match:
         try:
             MOISTURE_THRESH = int(mt_match.group(1))
-            logger.info(f"Received initial moisture threshold: {MOISTURE_THRESH}")
+            logger.info(f"Received moisture threshold: {MOISTURE_THRESH}")
             socketio.emit("threshold_update", {
                 "key": KEY_MOISTURE_THRESH,
                 "value": MOISTURE_THRESH
@@ -158,7 +162,7 @@ def handle_command(current_logs, line, reading_logs):
     elif lt_match:
         try:
             LIGHT_THRESH = int(lt_match.group(1))
-            logger.info(f"Received initial light threshold: {LIGHT_THRESH}")
+            logger.info(f"Received light threshold: {LIGHT_THRESH}")
             socketio.emit("threshold_update", {
                 "key": KET_LIGHT_THRESH,
                 "value": LIGHT_THRESH

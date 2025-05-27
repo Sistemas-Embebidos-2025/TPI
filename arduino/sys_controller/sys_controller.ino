@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <EEPROM.h>
 #include <semphr.h>
@@ -11,6 +12,7 @@
 #define LOG_HEADER "TS,T,V"
 #define LOG_END "E"
 #define ERROR "R"
+#define SUCCESS "OK"
 #define CMD_UNKNOWN "U"
 #define CMD_TIME 'T'
 #define CMD_GET_LOGS "G"
@@ -69,6 +71,21 @@ static int oneSecond = pdMS_TO_TICKS(1000);
 char cmd_buffer[CMD_BUFFER_SIZE];
 uint8_t buffer_index = 0;
 
+void printOK() {
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.println(F(SUCCESS));
+        xSemaphoreGive(serialMutex);
+    }
+}
+
+void printError(const char *errorMsg){
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.print(F(ERROR));
+        Serial.println(errorMsg);
+        xSemaphoreGive(serialMutex);
+    }
+}
+
 unsigned int findNextEEPROMAddress() {
     Event event{};
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
@@ -80,11 +97,9 @@ unsigned int findNextEEPROMAddress() {
         if (event.timestamp == 0xFFFFFFFF) return LOG_START_ADDRESS + offset;
     }
     // If no empty slot is found (EEPROM log area is full), wrap around to the beginning of the log area.
-    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-        Serial.print(F(ERROR));
-        Serial.println(F("OverwritingLogs"));
-        xSemaphoreGive(serialMutex);
-    }
+    // No semaphore, since it's called before initializing the tasks.
+    Serial.print(F(ERROR));
+    Serial.println(F("OverwritingLogs"));
     return LOG_START_ADDRESS;
 }
 
@@ -96,11 +111,7 @@ void logEvent(const uint8_t type, const uint16_t value) {
 
     if (usableLogLength == 0) {
         // Not enough space for even one log record
-        if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-            Serial.print(F(ERROR));
-            Serial.println(F("NoLogSpace"));
-            xSemaphoreGive(serialMutex);
-        }
+        printError("NoLogSpace");
         return;
     }
 
@@ -172,7 +183,7 @@ void logCurrentSystemState() {
     logEvent(LIGHT_TH, lightTh);
 
     // Log current irrigation pin state
-    logEvent(AUTO_IRRIGATION, (digitalRead(irrigationPins[0]) == HIGH) ? 1 : 0);
+    logEvent(AUTO_IRRIGATION, digitalRead(irrigationPins[0]) == HIGH ? 1 : 0);
     // TODO: Use semaphore to protect
     logEvent(AUTO_LIGHT, globalBrightness);
 }
@@ -195,8 +206,6 @@ void unknownCommand(const char *cmd) {
 }
 
 void handleCommand(const char *cmd) {
-    // Serial.print(F("Handling: ")); Serial.println(cmd); // Debug
-
     if (cmd == nullptr || cmd[0] == '\0') return;
 
     // Time Command
@@ -208,6 +217,7 @@ void handleCommand(const char *cmd) {
             EEPROM.put(EEPROM_ADDR_CURRENT_TIME, currentTime);
             xSemaphoreGive(eepromMutex);
         }
+        printOK();
         return;
     }
 
@@ -221,6 +231,7 @@ void handleCommand(const char *cmd) {
         // Delete logs
         clearLogs();
         logCurrentSystemState();
+        printOK();
         return;
     }
     if (strcmp(cmd, CMD_GET_MOISTURE_THRESHOLD) == 0) {
@@ -250,11 +261,13 @@ void handleCommand(const char *cmd) {
         if (key == CMD_SET_LIGHT_THRESHOLD) {
             lightTh = constrain(val, 0, 1023);
             logEvent(LIGHT_TH, lightTh);
+            printOK();
             return;
         }
         if (key == CMD_SET_MOISTURE_THRESHOLD) {
             moistureTh = constrain(val, 0, 1023);
             logEvent(MOISTURE_TH, moistureTh);
+            printOK();
             return;
         }
     }
@@ -347,7 +360,9 @@ void serialComTask(void *pvParameters) {
                 cmd_buffer[buffer_index++] = receivedChar;
             } else {
                 Serial.print(F(ERROR));
-                Serial.println(F("CMDBufferOverflow"));
+                Serial.println(F("BufferOverflow"));
+                // printError("BufferOverflow");
+                // If I use a semaphore here, it will cause a deadlock. WHY?
                 buffer_index = 0;
             }
         }
@@ -379,15 +394,6 @@ void updateTimeTask(void *pvParameters) {
 
 void setup() {
     Serial.begin(115200);
-    EEPROM.begin();
-
-    uint32_t storedTime = 0;
-    EEPROM.get(EEPROM_ADDR_CURRENT_TIME, storedTime);
-    if (storedTime >= currentTime && storedTime < 0xFFFFFFFF) {
-        // Basic validity check
-        currentTime = storedTime;
-    }
-    nextAddr = findNextEEPROMAddress();
 
     // Init irrigation and light pins
     for (const int pin: irrigationPins) {
@@ -403,9 +409,20 @@ void setup() {
     serialMutex = xSemaphoreCreateMutex();
     sensorMutex = xSemaphoreCreateMutex();
 
+    EEPROM.begin();
+
+    uint32_t storedTime = 0;
+    EEPROM.get(EEPROM_ADDR_CURRENT_TIME, storedTime);
+    if (storedTime >= currentTime && storedTime < 0xFFFFFFFF) {
+        // Basic validity check
+        currentTime = storedTime;
+    }
+
+    nextAddr = findNextEEPROMAddress();
+
     xTaskCreate(readSensorsTask, "Sensors", 200, nullptr, 1, nullptr);
-    xTaskCreate(autoControlTask, "AutoCtrl", 128, nullptr, 1, nullptr);
-    xTaskCreate(serialComTask, "Serial", 300, nullptr, 2, nullptr);
+    xTaskCreate(autoControlTask, "AutoCtrl", 128, nullptr, 2, nullptr);
+    xTaskCreate(serialComTask, "Serial", 300, nullptr, 3, nullptr);
     xTaskCreate(updateTimeTask, "Time", 70, nullptr, 1, nullptr);
 
     vTaskStartScheduler();
