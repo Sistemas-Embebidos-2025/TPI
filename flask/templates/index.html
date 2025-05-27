@@ -32,8 +32,8 @@
         <div class="control-group">
             <label>Moisture Threshold:
                 <input type="range" class="threshold-input" data-type="MT" min="0" max="1023" value="500"
-                oninput="updateThresholdDisplay(this, 'MTValue')"
-                onchange="sendThresholdUpdate(this)">
+                       oninput="updateThresholdDisplay(this, 'MTValue')"
+                       onchange="sendThresholdUpdate(this)">
                 <span id="MTValue" class="value-display">500</span>
             </label>
         </div>
@@ -69,6 +69,8 @@
         <div id="logStatus" style="margin-top: 5px; font-style: italic;"></div>
     </div>
 </div>
+
+<div id="snackbar-container"></div>
 
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

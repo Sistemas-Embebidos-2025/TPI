@@ -25,6 +25,7 @@ lock = Lock()
 MOISTURE_THRESH = 500
 LIGHT_THRESH = 500
 
+ERROR = "R"
 CMD_TIME = 'T'
 CMD_SET_LIGHT_THRESH = 'L'
 CMD_SET_MOISTURE_THRESH = 'M'
@@ -88,16 +89,11 @@ def serial_reader():
     global MOISTURE_THRESH, LIGHT_THRESH
     reading_logs = False
     current_logs = []
-    log_pattern = re.compile(r"^(\d+),(\d+),(\d+)$")
-
-    # Regex for threshold values from Arduino
-    moisture_th_pattern = re.compile(rf"^{CMD_GET_MOISTURE_THRESH}(\d+)$")
-    light_th_pattern = re.compile(rf"^{CMD_GET_LIGHT_THRESH}(\d+)$")
-    sensor_data_pattern = re.compile(rf"^{MEASUREMENT_MOISTURE}(\d+){MEASUREMENT_LIGHT}(\d+)$")
 
     while True:
         if reading_logs and (not ser or not ser.is_open):
             logger.warning("Serial port closed or error while reading logs. Sending partial logs.")
+            socketio.emit('info', {"message": "Serial port closed or error while reading logs."})
             if current_logs:
                 socketio.emit("log_data", {"logs": current_logs})
             current_logs, reading_logs = reset_logs()
@@ -132,14 +128,19 @@ def serial_reader():
             continue
 
         if reading_logs:
-            current_logs, reading_logs = read_logs(current_logs, line, log_pattern, reading_logs)
+            current_logs, reading_logs = read_logs(current_logs, line, reading_logs)
         else:
-            current_logs, reading_logs = handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, reading_logs, sensor_data_pattern)
+            current_logs, reading_logs = handle_command(current_logs, line, reading_logs)
 
 
-def handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, reading_logs, sensor_data_pattern):
+def handle_command(current_logs, line, reading_logs):
     global MOISTURE_THRESH, LIGHT_THRESH
+
     # Check for threshold responses
+    moisture_th_pattern = re.compile(rf"^{CMD_GET_MOISTURE_THRESH}(\d+)$")
+    light_th_pattern = re.compile(rf"^{CMD_GET_LIGHT_THRESH}(\d+)$")
+    sensor_data_pattern = re.compile(rf"^{MEASUREMENT_MOISTURE}(\d+){MEASUREMENT_LIGHT}(\d+)$")
+
     mt_match = moisture_th_pattern.match(line)
     lt_match = light_th_pattern.match(line)
     sensor_match = sensor_data_pattern.match(line)
@@ -189,15 +190,21 @@ def handle_command(current_logs, light_th_pattern, line, moisture_th_pattern, re
             logger.error(f"Could not parse sensor value from: {line}")
             socketio.emit("error", {"message": f"Malformed sensor data: {line}"})
     elif line.startswith(CMD_UNK):
-        logger.error(f"Command was unrecognized by Arduino: {line[1:]}")
+        logger.error(f"Sent command not recognized by Arduino: {line[1:]}")
+        socketio.emit("error", {"message": f"Sent command not recognized by Arduino: {line[1:]}"})
+    elif line.startswith(ERROR):
+        logger.error(f"Arduino reported an error: {line[1:]}")
         socketio.emit("error", {"message": f"Arduino error: {line[1:]}"})
     else:
         if line:  # Avoid printing empty lines if any
             logger.debug(f"Received serial data: {line}")
+            socketio.emit("error", {"message": f"Unexpected data from Arduino: {line}"})
     return current_logs, reading_logs
 
 
-def read_logs(current_logs, line, log_pattern, reading_logs):
+def read_logs(current_logs, line, reading_logs):
+    log_pattern = re.compile(r"^(\d+),(\d+),(\d+)$")
+
     if line == LOG_END:
         logger.info("Detected E (End logs) marker.")
         socketio.emit("log_data", {"logs": current_logs})
@@ -299,12 +306,14 @@ def send_arduino_command(command_str: str):
     """Sends a command string to the Arduino, ensuring it's newline terminated."""
     if not ser:
         logger.error(f"Arduino not connected to a serial port. Cannot send command: {command_str}")
+        socketio.emit("error", {"message": "Arduino not connected to a serial port."})
         return False
     try:
         full_command = command_str if command_str.endswith('\n') else f"{command_str}\n"
         with lock:
             ser.write(full_command.encode())
         logger.info(f"Sent command to Arduino: {full_command}")
+        # socketio.emit("info", {"message": f"Command sent to Arduino: {full_command.strip()}"})
         time.sleep(0.1)
         return True
     except Exception as e:
@@ -324,6 +333,7 @@ if __name__ == "__main__":
             socketio.emit("error", {"message": "Initial time sync failed. Arduino time may be incorrect until next sync."})
         else:
             logger.info("Initial time sync command sent successfully.")
+            socketio.emit("info", {"message": "Initial time sync command sent successfully."})
 
         request_initial_thresholds()
 

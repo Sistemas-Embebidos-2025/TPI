@@ -225,6 +225,71 @@ input:checked + .slider:before {
 	background-color: #f9f9f9;
 }
 
+#logStatus {
+	margin-top: 8px;
+	font-style: italic;
+	padding: 8px;
+	border-radius: 4px;
+	transition: background-color 0.3s, color 0.3s;
+}
+
+.log-status-info {
+	background-color: #e6f7ff; /* Light blue background for info */
+	color: #005f87; /* Dark blue text */
+	border: 1px solid #b3e0ff; /* Light blue border */
+}
+
+.log-status-error {
+	background-color: #ffe6e6; /* Light red background for errors */
+	color: #cc0000; /* Dark red text */
+	font-weight: bold;
+	border: 1px solid #ffb3b3; /* Light red border */
+}
+
+/* Snackbar Container */
+#snackbar-container {
+	position: fixed;
+	bottom: 20px;
+	right: 20px;
+	display: flex;
+	flex-direction: column-reverse; /* New snackbars appear above old ones */
+	align-items: flex-end;
+	z-index: 1000; /* Ensure it's above other content */
+}
+
+/* Individual Snackbar Styling */
+.snackbar {
+	background-color: #333; /* Default dark background */
+	color: white;
+	padding: 12px 20px;
+	border-radius: 6px;
+	margin-top: 10px; /* Space between snackbars */
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+	opacity: 0;
+	transform: translateX(100%); /* Start off-screen to the right */
+	transition: opacity 0.4s ease-in-out, transform 0.4s ease-in-out;
+	min-width: 250px; /* Minimum width */
+	font-size: 0.9em;
+}
+
+.snackbar.show {
+	opacity: 1;
+	transform: translateX(0); /* Slide in */
+}
+
+/* Info Snackbar Styling */
+.snackbar-info {
+	background-color: #2b6cb0; /* Blue for info */
+	color: white;
+}
+
+/* Error Snackbar Styling */
+.snackbar-error {
+	background-color: #c53030; /* Red for errors */
+	color: white;
+	font-weight: bold;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
 	.chart-container {

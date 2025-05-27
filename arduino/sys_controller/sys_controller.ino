@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <EEPROM.h>
 #include <semphr.h>
@@ -11,6 +10,7 @@
 
 #define LOG_HEADER "TS,T,V"
 #define LOG_END "E"
+#define ERROR "R"
 #define CMD_UNKNOWN "U"
 #define CMD_TIME 'T'
 #define CMD_GET_LOGS "G"
@@ -46,8 +46,8 @@ enum EventType {
     MEASURE_LIGHT = 5,    // 5 Periodic light sensor reading
 };
 
-static constexpr uint8_t logSensorPeriod = 60;        // Seconds to log sensor values
-static constexpr uint32_t timeSaveInterval = 15 * 60; // Seconds to save currentTime to EEPROM (15 minutes)
+static constexpr uint8_t logSensorPeriod = 5 * 60;     // Seconds to log sensor values
+static constexpr uint32_t timeSaveInterval = 15 * 60;  // Seconds to save currentTime to EEPROM (15 minutes)
 
 SemaphoreHandle_t eepromMutex;
 SemaphoreHandle_t serialMutex;
@@ -80,18 +80,25 @@ unsigned int findNextEEPROMAddress() {
         if (event.timestamp == 0xFFFFFFFF) return LOG_START_ADDRESS + offset;
     }
     // If no empty slot is found (EEPROM log area is full), wrap around to the beginning of the log area.
+    if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.print(F(ERROR));
+        Serial.println(F("OverwritingLogs"));
+        xSemaphoreGive(serialMutex);
+    }
     return LOG_START_ADDRESS;
 }
 
 void logEvent(const uint8_t type, const uint16_t value) {
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
     // Ensure usableLogLength is positive
-    const unsigned int usableLogLength = logDataAreaLength >= RECORD_SIZE ? logDataAreaLength / RECORD_SIZE * RECORD_SIZE : 0;
+    const unsigned int usableLogLength =
+            logDataAreaLength >= RECORD_SIZE ? logDataAreaLength / RECORD_SIZE * RECORD_SIZE : 0;
 
     if (usableLogLength == 0) {
         // Not enough space for even one log record
         if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
-            Serial.println(F("ERR:NoLogSpace"));
+            Serial.print(F(ERROR));
+            Serial.println(F("NoLogSpace"));
             xSemaphoreGive(serialMutex);
         }
         return;
@@ -194,8 +201,13 @@ void handleCommand(const char *cmd) {
 
     // Time Command
     if (cmd[0] == CMD_TIME) {
+        // Update current time
         currentTime = static_cast<uint32_t>(atol(cmd + 1));
-        // Serial.println(currentTime);  // Debug
+        // Log the current time in the EEPROM
+        if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
+            EEPROM.put(EEPROM_ADDR_CURRENT_TIME, currentTime);
+            xSemaphoreGive(eepromMutex);
+        }
         return;
     }
 
@@ -235,8 +247,6 @@ void handleCommand(const char *cmd) {
     if (strlen(cmd) >= 2) {
         const char key = cmd[0];
         const auto val = static_cast<uint16_t>(atoi(cmd + 1));
-        // Serial.print(F("Key: ")); Serial.println(key); // Debug
-        // Serial.print(F("Val: ")); Serial.println(val); // Debug
         if (key == CMD_SET_LIGHT_THRESHOLD) {
             lightTh = constrain(val, 0, 1023);
             logEvent(LIGHT_TH, lightTh);
@@ -275,7 +285,7 @@ void readSensorsTask(void *pvParameters) {
             xSemaphoreGive(serialMutex);
         }
 
-        // Log periodic sensor values every 30 seconds
+        // Log periodic sensor values
         if (currentTime - lastPeriodicLog >= logSensorPeriod) {
             logEvent(MEASURE_MOISTURE, localMoisture);
             logEvent(MEASURE_LIGHT, localLight);
@@ -324,14 +334,11 @@ void autoControlTask(void *pvParameters) {
 void serialComTask(void *pvParameters) {
     while (true) {
         while (Serial.available()) {
-            // String cmd = Serial.readStringUntil('\n');
             const char receivedChar = static_cast<char>(Serial.read());
             if (receivedChar == '\n' || receivedChar == '\r') {
                 if (buffer_index > 0) {
                     // If we have finished a command
                     cmd_buffer[buffer_index] = '\0'; // Null-terminate the string
-                    // Serial.print(F("BUF:")); Serial.println(cmd_buffer); //Debug
-
                     handleCommand(cmd_buffer);
                     buffer_index = 0; // Reset buffer index for next command
                 }
@@ -339,7 +346,8 @@ void serialComTask(void *pvParameters) {
                 // Add char to buffer if it's not newline and fits
                 cmd_buffer[buffer_index++] = receivedChar;
             } else {
-                Serial.println(F("ERR: CMD Buffer Overflow"));
+                Serial.print(F(ERROR));
+                Serial.println(F("CMDBufferOverflow"));
                 buffer_index = 0;
             }
         }
@@ -356,9 +364,9 @@ void updateTimeTask(void *pvParameters) {
         currentTime++; // Increment even if no NTP updates
         vTaskDelayUntil(&lastWakeTime, oneSecond);
 
+        // Log current time in the EEPROM every timeSaveInterval seconds
         if (currentTime - lastSavedTime >= timeSaveInterval) {
             if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
-                // Or a dedicated timeSaveMutex
                 EEPROM.put(EEPROM_ADDR_CURRENT_TIME, currentTime);
                 xSemaphoreGive(eepromMutex);
             }
