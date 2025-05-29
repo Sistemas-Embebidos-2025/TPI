@@ -1,3 +1,19 @@
+/**
+ * @file main.cpp
+ * @brief Smart irrigation and lighting system for Arduino using FreeRTOS.
+ *
+ * This firmware manages automatic irrigation and lighting based on sensor readings,
+ * logs events to EEPROM, and communicates via serial commands. It uses FreeRTOS tasks
+ * for concurrent sensor reading, control, serial communication, and timekeeping.
+ *
+ * Features:
+ * - Periodic sensor readings (moisture, light)
+ * - Automatic irrigation and lighting control based on thresholds
+ * - Event logging to EEPROM with wrap-around
+ * - Serial command interface for configuration and log retrieval
+ * - Persistent timekeeping with periodic EEPROM backup
+ */
+
 #include <Arduino.h>
 #include <Arduino_FreeRTOS.h>
 #include <EEPROM.h>
@@ -71,6 +87,9 @@ static int oneSecond = pdMS_TO_TICKS(1000);
 char cmd_buffer[CMD_BUFFER_SIZE];
 uint8_t buffer_index = 0;
 
+/**
+ * @brief Print "OK" to serial in a thread-safe manner.
+ */
 void printOK() {
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
         Serial.println(F(SUCCESS));
@@ -78,6 +97,10 @@ void printOK() {
     }
 }
 
+/**
+ * @brief Print an error message to serial in a thread-safe manner.
+ * @param errorMsg Error message string
+ */
 void printError(const char *errorMsg){
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
         Serial.print(F(ERROR));
@@ -86,6 +109,10 @@ void printError(const char *errorMsg){
     }
 }
 
+/**
+ * @brief Find the next available EEPROM address for logging.
+ * @return Address of the next empty log slot.
+ */
 unsigned int findNextEEPROMAddress() {
     Event event{};
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
@@ -103,6 +130,11 @@ unsigned int findNextEEPROMAddress() {
     return LOG_START_ADDRESS;
 }
 
+/**
+ * @brief Log an event to EEPROM.
+ * @param type Event type (see EventType)
+ * @param value Associated value for the event
+ */
 void logEvent(const uint8_t type, const uint16_t value) {
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
     // Ensure usableLogLength is positive
@@ -128,7 +160,9 @@ void logEvent(const uint8_t type, const uint16_t value) {
     }
 }
 
-// Read through EEPROM from 0 up to first empty slot and dump each Event over
+/**
+ * @brief Print all logged events from EEPROM to serial.
+ */
 void printLogs() {
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
     const unsigned int usableLogLength = logDataAreaLength / RECORD_SIZE * RECORD_SIZE;
@@ -153,7 +187,9 @@ void printLogs() {
     }
 }
 
-// Clear all logs from EEPROM
+/**
+ * @brief Clear all logs from EEPROM.
+ */
 void clearLogs() {
     const unsigned int logDataAreaLength = EEPROM.length() - LOG_START_ADDRESS;
     if (xSemaphoreTake(eepromMutex, portMAX_DELAY) == pdTRUE) {
@@ -167,6 +203,9 @@ void clearLogs() {
     }
 }
 
+/**
+ * @brief Log the current system state (sensor values, thresholds, pin states).
+ */
 void logCurrentSystemState() {
     uint16_t localMoisture = 0, localLight = 0; // local copies of sensor values
 
@@ -188,15 +227,27 @@ void logCurrentSystemState() {
     logEvent(AUTO_LIGHT, globalBrightness);
 }
 
+/**
+ * @brief Set the state of all irrigation pins.
+ * @param state true to turn on, false to turn off
+ */
 void setIrrigationPins(const bool state) {
     for (const int pin: irrigationPins) { digitalWrite(pin, state ? HIGH : LOW); }
 }
 
+/**
+ * @brief Set the brightness of all light pins.
+ * @param brightness PWM value (0-255)
+ */
 void setLightPins(const int brightness) {
     globalBrightness = constrain(brightness, 0, 255);
     for (const int pin: lightPins) { analogWrite(pin, globalBrightness); }
 }
 
+/**
+ * @brief Print an unknown command response to serial.
+ * @param cmd The unknown command string
+ */
 void unknownCommand(const char *cmd) {
     if (xSemaphoreTake(serialMutex, portMAX_DELAY) == pdTRUE) {
         Serial.print(F(CMD_UNKNOWN));
@@ -205,6 +256,10 @@ void unknownCommand(const char *cmd) {
     }
 }
 
+/**
+ * @brief Handle a received serial command.
+ * @param cmd Null-terminated command string
+ */
 void handleCommand(const char *cmd) {
     if (cmd == nullptr || cmd[0] == '\0') return;
 
@@ -276,6 +331,10 @@ void handleCommand(const char *cmd) {
 
 // TASKS ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * @brief Task: Periodically read sensors and log values.
+ * @param pvParameters Unused
+ */
 void readSensorsTask(void *pvParameters) {
     static uint32_t lastPeriodicLog = 0;
 
@@ -309,6 +368,10 @@ void readSensorsTask(void *pvParameters) {
     }
 }
 
+/**
+ * @brief Task: Automatic control of irrigation and lighting based on sensor readings.
+ * @param pvParameters Unused
+ */
 void autoControlTask(void *pvParameters) {
     static bool wasLightLow = false;
 
@@ -344,6 +407,10 @@ void autoControlTask(void *pvParameters) {
     }
 }
 
+/**
+ * @brief Task: Handle serial communication and command parsing.
+ * @param pvParameters Unused
+ */
 void serialComTask(void *pvParameters) {
     while (true) {
         while (Serial.available()) {
@@ -370,7 +437,10 @@ void serialComTask(void *pvParameters) {
     }
 }
 
-// Update time task to handle NTP updates
+/**
+ * @brief Task: Increment and periodically save system time to EEPROM.
+ * @param pvParameters Unused
+ */
 void updateTimeTask(void *pvParameters) {
     TickType_t lastWakeTime = xTaskGetTickCount();
     uint32_t lastSavedTime = 0;
@@ -392,6 +462,9 @@ void updateTimeTask(void *pvParameters) {
 
 // SETUP & LOOP --------------------------------------------------------------------------------------------------------
 
+/**
+ * @brief Arduino setup function. Initializes hardware, EEPROM, mutexes, and tasks.
+ */
 void setup() {
     Serial.begin(115200);
 
@@ -428,4 +501,7 @@ void setup() {
     vTaskStartScheduler();
 }
 
+/**
+ * @brief Arduino main loop (unused, required by framework).
+ */
 void loop() {}

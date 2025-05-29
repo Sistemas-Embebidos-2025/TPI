@@ -43,7 +43,12 @@ KET_LIGHT_THRESH = 'LT'
 KEY_MOISTURE_THRESH = 'MT'
 
 
-def get_ntp_time():
+def get_ntp_time() -> float | int:
+    """
+    Retrieves the current time from the configured NTP server.
+    Falls back to system time if NTP is unavailable.
+    :return: Current timestamp adjusted for TIME_ZONE_OFFSET.
+    """
     client = ntplib.NTPClient()
     try:
         response = client.request(NTP_SERVER, version=4)
@@ -56,15 +61,21 @@ def get_ntp_time():
 
 
 def sync_time():
-    """Periodic time synchronization loop."""
+    """
+    Periodically synchronizes the Arduino's time with the NTP server.
+    Runs in a background thread.
+    """
     logger.info("Starting periodic time sync.")
     while True:
         sync_time_internal()  # Attempt sync
         time.sleep(3600)  # Sync periodically (e.g., every hour)
 
 
-def sync_time_internal():
-    """Attempts a single time sync."""
+def sync_time_internal() -> bool:
+    """
+    Attempts a single synchronization of the Arduino's time with the NTP server.
+    :return: True if successful, False otherwise.
+    """
     try:
         current_time = int(get_ntp_time())
         command = f"{CMD_TIME}{current_time}\n"
@@ -79,7 +90,9 @@ def sync_time_internal():
 
 
 def request_initial_thresholds():
-    """Requests initial thresholds from Arduino."""
+    """
+    Requests the initial moisture and light thresholds from the Arduino.
+    """
     logger.info("Requesting initial moisture threshold...")
     send_arduino_command("%s\n" % CMD_GET_MOISTURE_THRESH)
     logger.info("Requesting initial light threshold...")
@@ -87,6 +100,11 @@ def request_initial_thresholds():
 
 
 def serial_reader():
+    """
+    Continuously reads from the serial port.
+    Handles log reading, sensor data, and command responses.
+    Emits relevant events to connected SocketIO clients.
+    """
     global MOISTURE_THRESH, LIGHT_THRESH
     reading_logs = False
     current_logs = []
@@ -134,7 +152,15 @@ def serial_reader():
             current_logs, reading_logs = handle_command(current_logs, line, reading_logs)
 
 
-def handle_command(current_logs, line, reading_logs):
+def handle_command(current_logs: list, line: str, reading_logs: bool) -> tuple[list, bool]:
+    """
+    Processes a single line of serial input when not reading logs.
+    Handles threshold updates, sensor data, and error messages.
+    :param current_logs: Current log entries.
+    :param line: Serial input line.
+    :param reading_logs: Whether currently reading logs.
+    :return: (current_logs, reading_logs)
+    """
     global MOISTURE_THRESH, LIGHT_THRESH
 
     # Check for threshold responses
@@ -206,7 +232,16 @@ def handle_command(current_logs, line, reading_logs):
     return current_logs, reading_logs
 
 
-def read_logs(current_logs, line, reading_logs):
+def read_logs(current_logs: list, line: str, reading_logs: bool) -> tuple[list, bool]:
+    """
+    Processes a single line of serial input while reading logs.
+    Collects log entries and emits them when finished.
+    Args:
+    :param current_logs: Current log entries.
+    :param line: Serial input line.
+    :param reading_logs: Whether currently reading logs.
+    :return: (current_logs, reading_logs)
+    """
     log_pattern = re.compile(r"^(\d+),(\d+),(\d+)$")
 
     if line == LOG_END:
@@ -228,17 +263,28 @@ def read_logs(current_logs, line, reading_logs):
     return current_logs, reading_logs
 
 
-def reset_logs():
+def reset_logs() -> tuple:
+    """
+    Resets the log reading state.
+    :return: (empty list, False)
+    """
     return [], False
 
 
 @app.route('/')
 def index():
+    """
+    Renders the main index page.
+    """
     return render_template("index.html")
 
 
 @socketio.on("threshold_update")
-def threshold_update(data):
+def threshold_update(data: object):
+    """
+    Handles threshold update requests from clients.
+    Validates and sends new threshold values to the Arduino.
+    """
     global MOISTURE_THRESH, LIGHT_THRESH
     key = data.get("key")
     value = data.get("value")
@@ -274,6 +320,10 @@ def threshold_update(data):
 
 @socketio.on("logs_request")
 def handle_log_request():
+    """
+    Handles log data requests from clients.
+    Sends a command to the Arduino to retrieve logs.
+    """
     logger.info("Received log request from client.")
     command = "%s\n" % CMD_GET_LOGS
     if send_arduino_command(command):
@@ -283,9 +333,8 @@ def handle_log_request():
 @socketio.on("clear_logs_request")
 def handle_clear_logs_request():
     """
-    Handles request from frontend to clear logs.
+    Handles requests from the frontend to clear logs on the Arduino.
     """
-
     logger.info("Received clear log request from client.")
     command = "%s\n" % CMD_CLEAR_LOGS
     send_arduino_command(command)
@@ -293,6 +342,10 @@ def handle_clear_logs_request():
 
 @socketio.on("connect")
 def handle_connect():
+    """
+    Handles new client connections.
+    Sends current threshold values to the connected client.
+    """
     logger.info(f"Client connected with SID: {request.sid}")
     if MOISTURE_THRESH is not None:  # Check if it has a value
         socketio.emit("threshold_update", {
@@ -307,7 +360,12 @@ def handle_connect():
 
 
 def send_arduino_command(command_str: str):
-    """Sends a command string to the Arduino, ensuring it's newline terminated."""
+    """
+    Sends a command string to the Arduino over the serial port.
+    Ensures thread safety and proper command formatting.
+    :param command_str: (str) logger The command to send.
+    :return: True if the command was sent successfully, False otherwise.
+    """
     if not ser:
         logger.error(f"Arduino not connected to a serial port. Cannot send command: {command_str}")
         socketio.emit("error", {"message": "Arduino not connected to a serial port."})
@@ -327,6 +385,10 @@ def send_arduino_command(command_str: str):
 
 
 if __name__ == "__main__":
+    """
+    Main entry point for the Flask web server.
+    Initializes serial communication, synchronizes time, and starts background threads.
+    """
     if ser:
         logger.info(f"Arduino connected to a serial port.")
         time.sleep(2)  # Allow Arduino to settle

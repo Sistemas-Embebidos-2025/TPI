@@ -21,7 +21,11 @@ let sensorData = {
 	labels: []
 };
 
-// Helper function to update the logStatus element
+/**
+ * Updates the logStatus element with a message and style.
+ * @param {string} message - The message to display.
+ * @param {'info'|'error'} [type='info'] - The type of message.
+ */
 function updateLogStatus(message, type = 'info') {
 	if (logStatus) {
 		logStatus.textContent = message;
@@ -34,7 +38,11 @@ function updateLogStatus(message, type = 'info') {
 	}
 }
 
-// Function to show snackbar messages
+/**
+ * Displays a snackbar message to the user.
+ * @param {string} message - The message to show.
+ * @param {'info'|'error'} [type='info'] - The type of message.
+ */
 function showSnackbar(message, type = 'info') {
 	const container = document.getElementById('snackbar-container');
 	if (!container) {
@@ -77,7 +85,9 @@ function showSnackbar(message, type = 'info') {
 	}, 4000); // Snackbar visible for 4 seconds
 }
 
-// Initialize charts
+/**
+ * Initializes the moisture and light charts.
+ */
 function initCharts() {
 	const ctx1 = document.getElementById('moistureChart').getContext('2d');
 	const ctx2 = document.getElementById('lightChart').getContext('2d');
@@ -109,6 +119,10 @@ function initCharts() {
 	});
 }
 
+/**
+ * Updates the numeric displays and charts with new sensor data.
+ * @param {{moisture: number, light: number}} data - The sensor data.
+ */
 function updateDisplay(data) {
 	// Update numeric displays
 	$('#moistureValue').text(data.moisture);
@@ -130,7 +144,12 @@ function updateDisplay(data) {
 	lightChart.update();
 }
 
-// Debounce function to limit frequent calls
+/**
+ * Debounces a function to limit how often it can fire.
+ * @param {Function} func - The function to debounce.
+ * @param {number} delay - Delay in milliseconds.
+ * @returns {Function}
+ */
 function debounce(func, delay) {
 	let timeout;
 	return function (...args) {
@@ -139,6 +158,10 @@ function debounce(func, delay) {
 	};
 }
 
+/**
+ * Handles the "Get Logs" button click event.
+ * Requests logs from the backend and clears the log table.
+ */
 if (getLogsButton) { // Check if button exists
 	getLogsButton.addEventListener('click', () => {
 		updateLogStatus('Requesting logs...', 'info');
@@ -148,6 +171,10 @@ if (getLogsButton) { // Check if button exists
 	});
 }
 
+/**
+ * Handles the "Clear Logs" button click event.
+ * Requests log clearing from the backend and clears the log table.
+ */
 if (clearLogsButton) { // Check if button exists
 	clearLogsButton.addEventListener('click', () => {
 		showSnackbar('Clearing logs...', 'info');
@@ -158,8 +185,14 @@ if (clearLogsButton) { // Check if button exists
 	});
 }
 
+/**
+ * Receives sensor data updates from the backend and updates the display.
+ */
 socket.on('sensor_update', updateDisplay);
 
+/**
+ * Receives log data from the backend and populates the log table.
+ */
 socket.on('log_data', (data) => { // Listen for logs from backend
 	console.log("Received logs:", data.logs); // Log received data
 
@@ -185,8 +218,9 @@ socket.on('log_data', (data) => { // Listen for logs from backend
 	updateLogStatus(`Received ${data.logs.length} log entries.`, 'info');
 });
 
-
-// SocketIO Listener for synced threshold updates from backend.
+/**
+ * Receives threshold updates from the backend and updates the UI sliders and displays.
+ */
 socket.on('threshold_update', (data) => {
 	console.log("Received threshold update:", data);
 	const {key, value} = data;
@@ -204,19 +238,33 @@ socket.on('threshold_update', (data) => {
 	}
 });
 
+/**
+ * Receives error messages from the backend and displays them as snackbars.
+ */
 socket.on('error', (data) => {
 	showSnackbar(`Error: ${data.message}`, 'error');
 });
 
+/**
+ * Receives informational messages from the backend and displays them as snackbars.
+ */
 socket.on('info', (data) => {
 	showSnackbar(data.message, 'info');
 });
 
-// Threshold update functions
+/**
+ * Handles slider input changes for threshold updates.
+ * @param slider - The slider element that triggered the change.
+ * @param displayId - The ID of the display element to update.
+ */
 function updateThresholdDisplay(slider, displayId) {
 	document.getElementById(displayId).textContent = slider.value;
 }
 
+/**
+ * Debounced function to send threshold updates to the backend.
+ * @type {(function(...[*]): void)|*} - A debounced function that sends the threshold update.
+ */
 const sendThresholdUpdate = debounce((slider) => {
 	const type = slider.getAttribute('data-type');
 	const value = slider.value;
